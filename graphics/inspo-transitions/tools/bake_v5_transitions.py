@@ -267,7 +267,7 @@ def heat_tr(cut, pal="fire", seed=0):
 
 # ---------- v5e: LED dot-matrix depth (inspo 0:05 / 0:27), wavy + wiggle ----------
 PAL.update({
- "navy_led": [(0.0, (0.0, 0.0, 0.0)), (0.3, (0.012, 0.003, 0.0)), (0.55, (0.08, 0.02, 0.003)), (0.75, (0.35, 0.10, 0.02)), (0.9, (1.1, 0.55, 0.25)), (1.0, (2.4, 1.8, 1.4))],
+ "navy_led": [(0.0, (0.010, 0.002, 0.0)), (0.3, (0.035, 0.008, 0.001)), (0.55, (0.08, 0.02, 0.003)), (0.75, (0.35, 0.10, 0.02)), (0.9, (1.1, 0.55, 0.25)), (1.0, (2.4, 1.8, 1.4))],
  "gray_led": [(0.0, (0.0, 0.0, 0.0)), (0.3, (0.012, 0.012, 0.012)), (0.55, (0.12, 0.12, 0.12)), (0.78, (0.65, 0.65, 0.65)), (0.92, (1.8, 1.8, 1.8)), (1.0, (2.8, 2.8, 2.8))],
  "maize_led": [(0.0, (0.0, 0.0, 0.0)), (0.22, (0.01, 0.006, 0.0)), (0.45, (0.0, 0.10, 0.22)), (0.7, (0.02, 0.55, 0.95)), (0.88, (0.25, 1.5, 2.2)), (1.0, (1.6, 2.6, 3.0))],
  "blue_led":  [(0.0, (0.0, 0.0, 0.0)), (0.25, (0.06, 0.005, 0.0)), (0.5, (0.45, 0.06, 0.0)), (0.75, (1.6, 0.45, 0.02)), (0.9, (2.6, 1.4, 0.4)), (1.0, (3.0, 2.6, 2.0))],
@@ -286,6 +286,8 @@ def led_depth(t, d, seed=0):
     sm = sm + 0.012 * np.random.default_rng(seed * 13 + t).normal(size=sm.shape).astype(np.float32)   # LED shimmer
     return cv2.resize(sm, (W // CELL * CELL, H // CELL * CELL), interpolation=cv2.INTER_NEAREST)[:H, :W] if W % CELL == 0 and H % CELL == 0 else cv2.resize(sm, (W, H), interpolation=cv2.INTER_NEAREST)
 def led_img(t, d, pal, seed=0):
+    lo, hi = np.percentile(d, 2), np.percentile(d, 99.5)              # per-frame depth normalise: no shot goes black
+    d = (np.clip((d - lo) / max(hi - lo, 1e-3), 0, 1) * 0.92 + 0.04).astype(np.float32)
     dl = led_depth(t, d, seed)
     hm = heat(dl, pal, 1.15)
     glow = cv2.GaussianBlur(hm, (0, 0), 3.0)
@@ -321,23 +323,25 @@ def near_mask(d, q=0.86):
 def strike_on(lin, d, t, cut, seed, L):
     """goal-grammar lightning on the LED snap: charge arcs (cut-1), strike into the nearest object (cut), held restrike + crackle (cut+1..+3)"""
     k = t - cut
-    if k < -2 or k > 7: return lin
+    if k < -6 or k > 15: return lin
     rng = np.random.default_rng(seed * 7 + t // 2); core = np.zeros((H, W), np.float32)
     nm = near_mask(d); spill = 0.25; wfl = 0.0
     ys, xs = np.nonzero(nm); c = np.array([np.median(xs), ys.min() + 6.0]) if len(xs) else np.array([960.0, 420.0])
-    geo = L.channel(np.array([c[0] + np.random.default_rng(seed).uniform(-300, 300), -40.0]), c, np.random.default_rng(seed + 1), rough=0.17, branch=1.2, w0=9.0, i0=1.0)
-    if k < 0: edge_arcs(L, core, nm, rng, 5 + 4 * (k + 2), 0.35 + 0.25 * (k + 2), 2.0, d=d)
+    gs = seed * 101 + max(0, k) // 3                                  # channel re-forms every restrike (3f)
+    geo = L.channel(np.array([c[0] + np.random.default_rng(gs).uniform(-300, 300), -40.0]), c, np.random.default_rng(gs + 1), rough=0.17, branch=1.2, w0=9.0, i0=1.0)
+    if k < 0: u = (k + 7) / 6.0; edge_arcs(L, core, nm, rng, int(3 + 9 * u), 0.25 + 0.5 * u, 1.6 + 0.6 * u, d=d)
     elif k == 0: L.draw(core, geo); edge_arcs(L, core, nm, rng, 8, 0.8, 2.4, d=d); spill = 1.1; wfl = 0.3
     else:
-        e = (0.55, 0.9, 0.45, 0.75, 0.3, 0.5, 0.15)[k - 1]; L.draw(core, [(p, a, b, i * e) for p, a, b, i in geo]); edge_arcs(L, core, nm, rng, 4, 0.35 + 0.4 * e, 1.8, d=d); spill = 0.5 * e
+        e = (0.55, 0.9, 0.45, 0.75, 0.3, 0.6, 0.25, 0.85, 0.4, 0.2, 0.5, 0.15, 0.3, 0.1, 0.05)[k - 1]; L.draw(core, [(p, a, b, i * e) for p, a, b, i in geo]); edge_arcs(L, core, nm, rng, 4, 0.35 + 0.4 * e, 1.8, d=d); spill = 0.5 * e
     core *= float(np.clip(np.random.default_rng(900 + t).normal(1, 0.2), 0.65, 1.3))
     alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
     return lin + L.finish(core, alb, None, spill, 0.0, refl_gain=0.0, white_flash=wfl, bg_lin=lin)
 def led_tr(cut, pal="maize_led", seed=0, bolt=True):
     """footage dissolves into LED depth cell-by-cell (far first), LED holds + waves, snaps to B's LED (lightning strike), B returns near-first"""
     L = _L() if bolt else None
-    seq = [(cut - 6, 0.12), (cut - 5, 0.35), (cut - 4, 0.7), (cut - 3, 1.0), (cut - 2, 1.0), (cut - 1, 1.0),
-           (cut, 1.0), (cut + 1, 1.0), (cut + 2, 1.0), (cut + 3, 1.0), (cut + 4, 1.0), (cut + 5, 0.75), (cut + 6, 0.45), (cut + 7, 0.2), (cut + 8, 0.06)]
+    ramp_in = [0.06, 0.18, 0.38, 0.62, 0.85]                    # cut-14 .. cut-10
+    ramp_out = [0.85, 0.62, 0.38, 0.18, 0.06]                   # cut+12 .. cut+16
+    seq = [(cut - 14 + i, f) for i, f in enumerate(ramp_in)] + [(t, 1.0) for t in range(cut - 9, cut + 12)] + [(cut + 12 + i, f) for i, f in enumerate(ramp_out)]
     for t, frac in seq:
         d = depth(t)
         if d is None: raise SystemExit("missing depth %d" % t)
@@ -374,7 +378,9 @@ def dpush_tr(cut, seed=3, dirv=(1.0, 0.0)):
 
 # ---------- v5e ENDING: fans -> maize LED depth on the downbeat (lightning restrike) -> LED holds/waves -> dots switch off ----------
 def _L():
-    import importlib; cwd = os.getcwd(); sys.path.insert(0, G + "/puck-lightning/tools"); L = importlib.import_module("lightning_v5"); os.chdir(cwd); return L
+    import importlib; cwd = os.getcwd(); sys.path.insert(0, G + "/puck-lightning/tools"); L = importlib.import_module("lightning_v5"); os.chdir(cwd)
+    L.HOTL = np.array([0.78, 0.97, 1.0], np.float32); L.PINKL = np.array([0.08, 0.78, 1.0], np.float32); L.REDL = np.array([0.0, 0.45, 1.0], np.float32)   # MAIZE lightning in transitions
+    return L
 BM = G + "/m-logo/blockm_depth_exr/bm_%04d.exr"
 def m_depth(t, drop=479):
     """Block M depth (near=1) + alpha for tl t (render f1 = drop)"""

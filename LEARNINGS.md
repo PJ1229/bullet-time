@@ -57,7 +57,10 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
   - white flashes only;
   - no ink holds on black.
 - **What PJ liked (the hockey inspo reel grammar):**
-  - **LED depth map** (`led_tr`): the depth map seen through a 6 px round-dot LED matrix, **grayscale**, with a rolling wave and a parallax wiggle. Cells sweep in far-first and out near-first. A **coloured** lightning strike lands on the snap.
+  - **LED depth map** (`led_tr`): the depth map seen through a 6 px round-dot LED matrix, **navy**, with a rolling wave and a parallax wiggle. Cells sweep in far-first and out near-first. A **maize** lightning strike lands on the snap.
+    - **Give it time:** ~31 frames (5 in, ~1 s hold, 5 out). Shorter and you can't see the lightning.
+    - **Normalise depth per frame**, or mostly-far shots (a tunnel) go black.
+    - **Re-form the bolt channel every 3-frame restrike**; a channel held for 15 frames looks frozen.
   - **Depth orbit push** (`dpush_tr`): near and far layers move opposite ways around a mid-depth pivot, plus a dolly, with 28-sample motion blur. Blur the depth (σ≈28) and clamp the parallax, or near objects leave white holes.
 - **Rejected:**
   - drip wipes;
@@ -70,7 +73,7 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
   1. Fans push in.
   2. They drop into the LED field on the downbeat (strike).
   3. The official Block M (an STL from Printables) rises out of the depth field.
-  4. The bolt zaps it and it **turns maize, with a navy outline**.
+  4. The bolt zaps it: it **freezes, goes flat 2D and turns solid maize (#FFCB05) with a navy outline**.
   5. Crackle.
   6. The LED dots switch off.
 - **Depth maps:** Depth Anything V2 ONNX on PJ's Mac (`~/Documents/claude-tools/depth-model`), run through Blender's Python. Hugging Face is blocked from Claude's shells.

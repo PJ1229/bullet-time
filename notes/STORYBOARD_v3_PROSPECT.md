@@ -165,3 +165,11 @@ PJ notes: transitions boring, lightning weird except goal, no drip, pixel heatma
 - Lightning: only goal (V1) + rebuilt big hit (out_hit_v13: charge on #17 → one strike at contact held w/ restrikes → crackle). Scrum, cele, puck-lens lightning removed; Blender puck→lens shot removed; 3D M placeholder dropped (PJ may supply an official Block M).
 - Audio: TRANS_v5 track — ink swells 35/371, heat sweeps 229/421, short swooshes on the push cuts; zap 479; song extended 479–527.
 - Deliverables: 06_deliverables/hockey_prospect_v14_LOG_master_prores4444xq.mov (527f, ungraded log) + _TESTGRADE_preview(_small).mp4. Builder: master_v4/assemble.py ~/links v13 goal_fx_log_v7.
+
+## v15–v16 (2026-11-16 afternoon) — "Bullet Time"
+- LED depth now NAVY (black→navy→icy blue), depth normalised per frame so no hold goes black; lightning in transitions is MAIZE (lightning_v5 colours overridden in _L(); goal keeps its original look).
+- LED transitions at 48 / 239 / 431 now 31 frames (cut-14..cut+16): 5f ramp in, ~1s full LED hold, 5f ramp out. Strike: charge on the nearest object from cut-6, strike at the cut, channel re-forms every 3f restrike through cut+15. Arcs only on real silhouettes (depth-gradient filter), never on the frame border/floor band.
+- 384 is now a depth orbit push (ink cut).
+- Ending: fans → navy LED (strike on 479) → official Block M (Printables STL, `m-logo/blockm_led_v01.blend`, depth render `blockm_depth_exr`) rises out of the field → struck at 491: freezes, goes flat 2D, solid maize #FFCB05 + navy outline → crackle → LED dots switch off.
+- Audio: zaps at 48/239/431/491, crackle bed under each LED hold (−15 dB).
+- Deliverables: hockey_prospect_v16_LOG_master_prores4444xq.mov + _TESTGRADE_preview_small.mp4. Repo: github.com/PJ1229/bullet-time.
