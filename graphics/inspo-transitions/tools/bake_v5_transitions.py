@@ -8,8 +8,8 @@ OUT = G + "/inspo-transitions/bake_v5_log16/fx_tl_%04d.png"; os.makedirs(os.path
 W, H = 1920, 1080
 def rd(p): return cv2.imread(p, -1).astype(np.float32) / 65535
 def base(t): return rd(BASE % t)
-def under(t):                      # what V3 currently shows (v4 bake) or the base
-    return rd(V4 % t) if os.path.exists(V4 % t) else base(t)
+def under(t):                      # v19: stale v4 bake was cut for the old song length -> always use the real base
+    return base(t)
 def dec(c):
     cc = c * 1023; return np.where(cc >= 171.2102946929, (10 ** ((cc - 420) / 261.5)) * 0.19 - 0.01, (cc - 95) * 0.01125 / (171.2102946929 - 95))
 def enc(l):
@@ -581,6 +581,31 @@ def led_tr3(cut, seed=0, pal="navy3", bolt=True):
         if bolt and k >= -6: lin = strike_on(lin, d, t, cut, seed, L)
         yield t, enc(lin)
 
+
+# ---------- v19: transitions use the exact Block-M ending LED field (led_img + navy_led) ----------
+def ledM(t, d, seed=0):
+    return led_img(t, ndepth(d) * 0.85, "navy_led", seed)
+def smear_in(foot, led):
+    return whip(foot, 300) * 0.45 + whip(led, 120) * 0.65
+def led_tr4(cut, seed=0, bolt=True):
+    L = _L() if bolt else None
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        if k <= -13:
+            lin = whip(dec(under(t)), (90, 220)[k + 14], (1, 0)); yield t, enc(lin); continue
+        if k == -12:
+            lin = smear_in(dec(under(t)), ledM(t, d, seed))
+        elif k <= 11:
+            lin = ledM(t, d, seed)
+        elif k <= 13:
+            lin = streak(ledM(t, d, seed), (140, 420)[k - 12], seed + k) * (0.85, 0.5)[k - 12]
+        else:
+            lin = whip(dec(base(t)), (160, 50, 0)[k - 14], (-1, 0)); yield t, enc(lin); continue
+        if bolt and k >= -6: lin = strike_on(lin, d, t, cut, seed, L)
+        yield t, enc(lin)
+
 # ---------- plan (tl cut -> transition) ----------
 def ink_tr(cut, n_out=4, n_in=4, seed=1):
     A = under(cut - 1)
@@ -603,9 +628,9 @@ def smear_tr(cut, seed=3, vertical=True):
     yield cut + 2, smear(b3, seed + 6, 0.2, vertical, up=True)
 def glitch_cut(cut, seed=5):
     yield cut, glitch(under(cut), seed, 7, 0.15)
-PLAN = [(led_tr3, 48, dict(seed=11)), (led_tr3, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
+PLAN = [(led_tr4, 48, dict(seed=11)), (led_tr4, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
         (dpush_tr, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr, 384, dict(seed=71, dirv=(0.0, -1.0))),
-        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr3, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr4, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
 if __name__ == "__main__":
     want = set(int(x) for x in sys.argv[1:])
     done = []

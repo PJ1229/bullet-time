@@ -13,7 +13,8 @@ for t in range(0, 527):
         if a <= t <= b: p = f"{G}/impact-lightning/out_{n}_{LV}/il_{t:04d}.png"
     if p is None and 96 <= t <= 203: p = f"{G}/puck-lightning/{GOAL}/fx_{t:04d}.png"
     if p is None and os.path.exists(f"{G}/inspo-transitions/bake_v5_log16/fx_tl_{t:04d}.png"): p = f"{G}/inspo-transitions/bake_v5_log16/fx_tl_{t:04d}.png"
-    if p is None and os.path.exists(f"{G}/inspo-transitions/bake_v4_log16/fx_tl_{t:04d}.png"): p = f"{G}/inspo-transitions/bake_v4_log16/fx_tl_{t:04d}.png"
+    V4BAD = set(range(216, 239)) | set(range(312, 335)) | {380} | set(range(455, 467))   # v19: v4 frames out of sync with the re-timed base (old song length)
+    if p is None and t not in V4BAD and os.path.exists(f"{G}/inspo-transitions/bake_v4_log16/fx_tl_{t:04d}.png"): p = f"{G}/inspo-transitions/bake_v4_log16/fx_tl_{t:04d}.png"
     if p is None: p = f"{G}/master_v4/base16/b_{t:04d}.png"
     assert os.path.exists(p), p
     d = os.path.join(link, f"m_{t:04d}.png")

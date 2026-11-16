@@ -107,3 +107,10 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - Dot grid must have **dark gaps** to read (5px cell, dot radius 0.40, sharp edge) — 4px soft dots vanished.
 - Hold one depth scene per clip; on the cut, hard-switch depth A → depth B under the maize strike. Exit with a horizontal row streak (ref f176), then clean footage with a decelerating whip.
 - Always build a REF-vs-ours strip at matching phases (in / hold / out) before iterating.
+
+## v19: the "weird cuts / timing glitches" were a stale layer, not the transitions
+- The master stacks V4 lightning > goal FX > bake_v5 > bake_v4 > base. bake_v4 was baked BEFORE the song was extended a bar and never re-baked, so wherever v5 didn't cover it, old frames from the wrong clip moment showed through (216–238 ~8f off, 312–334 ~7f off, plus old punch-zooms at 380 / 463–466 that jumped into the next transition).
+- Found it by correlating every v4 frame against base at offsets −8..+8 (downscaled gray, cached base). Anything < 0.75 at offset 0 = out of sync.
+- Fix: `assemble.py` skips a V4BAD set; `under(t)` in the v5 baker now always reads the real base (the whip-in frames were sampling the stale layer too).
+- Rule: after ANY re-time of the base, re-validate or delete every older bake layer — never let a lower layer silently fill gaps.
+- Look: transitions now reuse the Block-M ending's LED field (`led_img` + `navy_led`, 6px dots, wave + parallax wiggle) — PJ's favourite — via `ledM()`; ref structure kept (whip → smear frame → hard-cut depth hold → maize strike on the cut → streak out → clean footage).
