@@ -1,0 +1,478 @@
+"""v5 inspo transitions in 16-bit LOG: ink-matte wipes, drip wipes, pixel smear / glitch (hockey inspo 0:01, 0:07, 0:19-0:22).
+Reads the v4 log base (master_v4/base16) and the v4 bake for frames it doesn't own. Writes bake_v5_log16/fx_tl_%04d.png.
+usage: python3 bake_v5_transitions.py [tl ...]   (no args = all planned transitions)"""
+import os, sys, cv2, numpy as np
+G = os.path.expanduser("~/mnt/TOSHIBA EXT/um-athletics/hockey-edit/03_graphics")
+BASE = G + "/master_v4/base16/b_%04d.png"; V4 = G + "/inspo-transitions/bake_v4_log16/fx_tl_%04d.png"
+OUT = G + "/inspo-transitions/bake_v5_log16/fx_tl_%04d.png"; os.makedirs(os.path.dirname(OUT), exist_ok=True)
+W, H = 1920, 1080
+def rd(p): return cv2.imread(p, -1).astype(np.float32) / 65535
+def base(t): return rd(BASE % t)
+def under(t):                      # what V3 currently shows (v4 bake) or the base
+    return rd(V4 % t) if os.path.exists(V4 % t) else base(t)
+def dec(c):
+    cc = c * 1023; return np.where(cc >= 171.2102946929, (10 ** ((cc - 420) / 261.5)) * 0.19 - 0.01, (cc - 95) * 0.01125 / (171.2102946929 - 95))
+def enc(l):
+    return np.clip(np.where(l >= 0.01125, (420 + np.log10(np.maximum(l + 0.01, 1e-6) / 0.19) * 261.5) / 1023, (l * (171.2102946929 - 95) / 0.01125 + 95) / 1023), 0, 1)
+BLACK = 95 / 1023.0                # S-Log3 code for scene black
+RIM = np.array([0.05, 0.08, 1.0], np.float32)     # BGR hockey-red rim light (linear)
+def zoom(im, s, c=(960, 540)):
+    M = np.float32([[s, 0, c[0] - s * c[0]], [0, s, c[1] - s * c[1]]]); return cv2.warpAffine(im, M, (W, H), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT)
+def noise_field(seed, scales=((260, 1.0), (90, 0.45), (28, 0.18))):
+    r = np.random.default_rng(seed); f = np.zeros((H, W), np.float32)
+    for s, a in scales:
+        n = r.random((H // s + 3, W // s + 3)).astype(np.float32)
+        f += a * cv2.resize(n, (W + 3 * s, H + 3 * s), interpolation=cv2.INTER_CUBIC)[:H, :W]
+    f -= f.min(); return f / f.max()
+def ss(x): x = np.clip(x, 0, 1); return x * x * (3 - 2 * x)
+# ---------- ink matte (organic blobs eat A -> recede to reveal B) ----------
+def _reveal(A, B, M, bandw, rim):
+    """A outside, B inside the matte; a thin dark ink band + red rim at the boundary (no black frames)"""
+    Ms = cv2.GaussianBlur(M, (0, 0), 1.0)
+    out = A * (1 - Ms[..., None]) + B * Ms[..., None]
+    d = cv2.distanceTransform((1 - M).astype(np.uint8), cv2.DIST_L2, 3) + cv2.distanceTransform(M.astype(np.uint8), cv2.DIST_L2, 3)
+    band = np.clip(1 - d / bandw, 0, 1)
+    out = out * (1 - band[..., None]) + BLACK * band[..., None]
+    rimm = cv2.GaussianBlur(np.clip(1 - np.abs(d - bandw) / 3.0, 0, 1).astype(np.float32), (0, 0), 1.5)
+    return enc(dec(out) + (rimm * 0.7 * rim)[..., None] * RIM)
+def ink(A, B, u, seed, rim=1.0):
+    F = noise_field(seed); thr = ss(u) * 1.06
+    M = (F < thr).astype(np.float32)
+    bandw = 4 + 18 * np.sin(np.pi * min(1, u))            # ink edge thickest mid-wipe
+    return _reveal(A, B, M, bandw, rim) if 0 < thr < 1.05 else (enc(dec(B)) if thr >= 1.05 else A)
+def drips(seed):
+    r = np.random.default_rng(seed); x = np.arange(W, dtype=np.float32); d = np.zeros(W, np.float32)
+    for _ in range(26):
+        c = r.uniform(0, W); w = r.uniform(10, 45); a = r.uniform(0.15, 0.6)
+        d += a * np.exp(-0.5 * ((x - c) / w) ** 2)
+    d += 0.04 * cv2.resize(r.random((1, 40)).astype(np.float32), (W, 1), interpolation=cv2.INTER_CUBIC)[0]
+    return d
+def drip(A, B, u, seed):
+    d = drips(seed); yy = np.arange(H, dtype=np.float32)[:, None] / H
+    k = ss(u); bottom = -0.45 + k * 1.9 + d[None, :] * (0.6 + 0.3 * k)
+    M = (yy < bottom).astype(np.float32)
+    if M.mean() > 0.995: return B
+    return _reveal(A, B, M, 7 + 10 * np.sin(np.pi * u), 1.0)
+# ---------- pixel smear / glitch ----------
+def smear(im, seed, amt=1.0, vertical=True, up=False):
+    r = np.random.default_rng(seed); o = im.copy()
+    if vertical:
+        rr = (0.25 + 0.5 * cv2.resize(r.random((1, 30)).astype(np.float32), (W, 1), interpolation=cv2.INTER_CUBIC)[0]) * H
+        rr = rr + (1 - amt) * H
+        Y = np.arange(H)[:, None].repeat(W, 1); R = rr.astype(int)[None, :].clip(0, H - 1)
+        sel = (Y > R) if not up else (Y < (H - R))
+        o[sel] = im[R.repeat(H, 0)[sel], np.arange(W)[None, :].repeat(H, 0)[sel]]
+    else:
+        cc = ((0.3 + 0.4 * cv2.resize(r.random((30, 1)).astype(np.float32), (1, H), interpolation=cv2.INTER_CUBIC)[:, 0]) * W + (1 - amt) * W).astype(int).clip(0, W - 1)
+        X = np.arange(W)[None, :].repeat(H, 0); sel = X > cc[:, None]
+        o[sel] = im[np.arange(H)[:, None].repeat(W, 1)[sel], cc[:, None].repeat(W, 1)[sel]]
+    return o
+def glitch(im, seed, n=14, blow=0.35):
+    r = np.random.default_rng(seed); o = im.copy(); lin = dec(o)
+    for _ in range(n):
+        h = int(r.uniform(12, 140)); y = int(r.uniform(0, H - h)); dx = int(r.choice([-1, 1]) * r.uniform(40, 260))
+        o[y:y + h] = np.roll(o[y:y + h], dx, axis=1)
+    k = int(r.uniform(6, 14)); o[..., 2] = np.roll(o[..., 2], k, axis=1); o[..., 0] = np.roll(o[..., 0], -k, axis=1)
+    lin = dec(o)
+    for _ in range(int(n * blow)):                                   # blown-out blocks (inspo 0:21)
+        h = int(r.uniform(60, 260)); w = int(r.uniform(200, 900)); y = int(r.uniform(0, H - h)); x = int(r.uniform(0, W - w))
+        lin[y:y + h, x:x + w] = lin[y:y + h, x:x + w] * 1.35 + 0.02
+    return enc(lin)
+
+# ---------- DEPTH-driven ink / drip (inspo 0:01 + 0:07): matte follows scene depth, background goes first ----------
+DEP = G + "/inspo-transitions/depth_in/depth_%04d.png"
+def depth(t):
+    p = DEP % t
+    if not os.path.exists(p): return None
+    d = cv2.imread(p, -1).astype(np.float32) / 65535          # Depth Anything: 1 = near
+    return cv2.bilateralFilter(d, 9, 0.08, 7)
+def _dcomp(A, B, inkA, revB):
+    """A outside the ink; inside the ink B shows wherever it has been revealed; black only in the overlap gap"""
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    inkA = cv2.morphologyEx(inkA.astype(np.float32), cv2.MORPH_OPEN, k); revB = cv2.morphologyEx(revB.astype(np.float32), cv2.MORPH_OPEN, k)
+    a = 1 - cv2.GaussianBlur(inkA, (0, 0), 1.0); bm = cv2.GaussianBlur(revB, (0, 0), 1.0) * (1 - a)
+    out = A * a[..., None] + B * bm[..., None] + BLACK * (1 - a - bm)[..., None]
+    ink = inkA * (1 - revB)
+    d = cv2.distanceTransform((1 - ink).astype(np.uint8), cv2.DIST_L2, 3)
+    rimm = cv2.GaussianBlur(np.clip(1 - np.abs(d - 2.5) / 2.5, 0, 1).astype(np.float32), (0, 0), 1.2) * (0.002 < ink.mean() < 0.995)
+    return enc(dec(out) + (rimm * 0.75)[..., None] * RIM)
+def _q(key, frac):
+    """mask of the top `frac` of key values"""
+    if frac <= 0.001: return np.zeros_like(key, bool)
+    if frac >= 0.999: return np.ones_like(key, bool)
+    return key >= np.quantile(key, 1 - frac)
+def depth_ink(A, B, dA, dB, u, seed):
+    F = noise_field(seed, ((180, 1.0), (60, 0.5), (18, 0.25)))
+    fa = ss(u / 0.6); fb = ss((u - 0.12) / 0.75)
+    inkA = _q((1 - dA) * 0.82 + 0.18 * F, fa)       # far of A inked first
+    revB = _q(dB * 0.82 + 0.18 * F, fb)             # near of B revealed first
+    return _dcomp(A, B, inkA, revB)
+def depth_drip(A, B, dA, dB, u, seed):
+    dr = drips(seed); yy = np.arange(H, dtype=np.float32)[:, None] / H
+    fa = ss(u / 0.6); fb = ss((u - 0.12) / 0.75)
+    keyA = (1 - dA) * 0.5 + (1 - yy) * 0.5 + dr[None, :] * 0.35   # top + far first, drippy edge
+    inkA = _q(keyA, fa)
+    revB = _q(dB * 0.85 + dr[None, :] * 0.15, fb)
+    return _dcomp(A, B, inkA, revB)
+def dink_tr(cut, n_out=4, n_in=4, seed=1, fn=None):
+    fn = fn or depth_ink; n = n_out + n_in
+    for i, t in enumerate(range(cut - n_out, cut + n_in)):
+        u = (i + 0.5) / n
+        a = under(min(t, cut - 1)); b = base(max(t, cut))
+        da = depth(min(t, cut - 1)); db = depth(max(t, cut))
+        if da is None or db is None: raise SystemExit("missing depth for %d" % t)
+        yield t, fn(a, b, da, db, u, seed)
+def ddrip_tr(cut, seed=2): return dink_tr(cut, 3, 4, seed, depth_drip)
+
+
+# ---------- DEPTH HEATMAP (inspo 0:05 green, 0:08 fire, 0:27 blue): shot becomes a colourised, pixelated depth map ----------
+PAL = {   # BGR scene-linear stops, far -> near
+ "fire": [(0.0, (0.0, 0.0, 0.0)), (0.25, (0.0, 0.0, 0.18)), (0.5, (0.0, 0.02, 0.75)), (0.72, (0.0, 0.22, 1.6)), (0.88, (0.05, 0.7, 2.4)), (1.0, (0.6, 1.8, 3.2))],
+ "ice":  [(0.0, (0.0, 0.0, 0.0)), (0.3, (0.16, 0.02, 0.0)), (0.55, (0.9, 0.18, 0.0)), (0.78, (2.0, 0.7, 0.1)), (1.0, (3.2, 2.2, 1.4))],
+ "maize":[(0.0, (0.0, 0.0, 0.0)), (0.3, (0.12, 0.02, 0.0)), (0.55, (0.3, 0.12, 0.05)), (0.78, (0.05, 0.75, 1.3)), (1.0, (0.35, 2.0, 2.8))],
+}
+def heat(d, pal, gamma=1.0):
+    x = np.clip(d, 0, 1) ** gamma; stops = PAL[pal]; out = np.zeros(d.shape + (3,), np.float32)
+    for (a, ca), (b, cb) in zip(stops[:-1], stops[1:]):
+        m = (x >= a) & (x <= b); w = ((x - a) / (b - a + 1e-6))[..., None]
+        out[m] = (np.array(ca) * (1 - w) + np.array(cb) * w)[m]
+    return out
+def pix(img, b):
+    if b <= 1: return img
+    s = cv2.resize(img, (max(1, W // b), max(1, H // b)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(s, (W, H), interpolation=cv2.INTER_NEAREST)
+def heat_frame(t, pal, block, mix, near_first=True, seed=0):
+    """mix 0 = footage, 1 = full heatmap; heat takes over FAR-first (or reveals footage NEAR-first on the way out)"""
+    src = under(t); d = depth(t)
+    if d is None: raise SystemExit("missing depth %d" % t)
+    r = np.random.default_rng(seed + t)
+    dd = d + 0.015 * r.normal(size=d.shape).astype(np.float32)            # slight sensor-ish shimmer
+    hm = heat(pix(dd, block), pal, 1.1)
+    if mix >= 0.999: lin = hm
+    else:
+        key = (1 - d) if near_first else d
+        m = (key >= np.quantile(key, 1 - mix)).astype(np.float32) if mix > 0.001 else np.zeros_like(d)
+        m = pix(cv2.GaussianBlur(m, (0, 0), 1.0), max(1, block))
+        lin = dec(src) * (1 - m[..., None]) + hm * m[..., None]
+    return enc(lin)
+def heat_tr(cut, pal="fire", seed=0):
+    """A: heat floods in far-first (3f) -> full pixel heat (2f, blocks grow) || B: full heat (2f, blocks shrink) -> footage returns near-first (3f)"""
+    seq = [(cut - 5, 0.3, 1), (cut - 4, 0.65, 2), (cut - 3, 1.0, 6), (cut - 2, 1.0, 14), (cut - 1, 1.0, 30),
+           (cut, 1.0, 24), (cut + 1, 1.0, 10), (cut + 2, 0.7, 4), (cut + 3, 0.35, 2), (cut + 4, 0.1, 1)]
+    for t, mix, b in seq:
+        yield t, heat_frame(t, pal, b, mix, near_first=(t < cut), seed=seed)
+
+
+# ---------- v5b: BLOCKY pixel heat (grid steps, not organic) ----------
+def block_order(d, cell, seed, far_first=True, rnd=0.3):
+    """per-cell order key: cell-average depth (far first) + a little random so cells pop in stepped clusters"""
+    hc, wc = H // cell + 1, W // cell + 1
+    small = cv2.resize(d, (wc, hc), interpolation=cv2.INTER_AREA)
+    r = np.random.default_rng(seed).random((hc, wc)).astype(np.float32)
+    k = ((1 - small) if far_first else small) * (1 - rnd) + r * rnd
+    return cv2.resize(k, (wc * cell, hc * cell), interpolation=cv2.INTER_NEAREST)[:H, :W]
+def heat_frame_b(t, pal, block, frac, far_first, seed):
+    src = under(t) if t < 9999 else None; d = depth(t)
+    if d is None: raise SystemExit("missing depth %d" % t)
+    q = max(1, block)
+    dq = np.round(pix(d, q) * 16) / 16                                  # posterised depth = chunky pixel levels
+    hm = heat(dq, pal, 1.1)
+    if frac >= 0.999: return enc(hm)
+    if frac <= 0.001: return enc(dec(src))
+    key = block_order(d, 16, seed, far_first)
+    m = (key >= np.quantile(key, 1 - frac)).astype(np.float32)
+    return enc(dec(src) * (1 - m[..., None]) + hm * m[..., None])
+def heat_tr(cut, pal="fire", seed=0):
+    seq = [(cut - 5, 0.18, 6, True), (cut - 4, 0.45, 6, True), (cut - 3, 0.8, 8, True), (cut - 2, 1.0, 10, True), (cut - 1, 1.0, 14, True),
+           (cut, 1.0, 14, False), (cut + 1, 1.0, 10, False), (cut + 2, 0.75, 8, False), (cut + 3, 0.4, 6, False), (cut + 4, 0.12, 6, False)]
+    for t, frac, b, ff in seq:
+        if t < cut: yield t, heat_frame_b(t, pal, b, frac, True, seed)
+        else:
+            src = base(t); d = depth(t); dq = np.round(pix(d, b) * 16) / 16; hm = heat(dq, pal, 1.1)
+            if frac >= 0.999: yield t, enc(hm); continue
+            key = block_order(d, 16, seed + 7, far_first=False)        # footage comes back near-first, in blocks
+            m = (key >= np.quantile(key, frac)).astype(np.float32)       # m = revealed footage
+            yield t, enc(dec(src) * m[..., None] + hm * (1 - m[..., None]))
+# ---------- v5b: KINETIC SLICE (smooth eased band slides, motion blur, light RGB split) ----------
+def ease_io(x): x = np.clip(x, 0, 1); return 0.5 - 0.5 * np.cos(np.pi * x)
+def bands(seed, n=7):
+    r = np.random.default_rng(seed); cuts = np.sort(r.uniform(0.08, 0.92, n - 1)); edges = np.r_[0, cuts, 1] * H
+    return [(int(edges[i]), int(edges[i + 1]), r.uniform(0.7, 1.3) * (1 if i % 2 == 0 else -1)) for i in range(n)]
+def slide(img, bnds, off, blur):
+    out = img.copy()
+    for y0, y1, sp in bnds:
+        dx = off * sp; band = img[y0:y1]
+        M = np.float32([[1, 0, dx], [0, 1, 0]]); sh = cv2.warpAffine(band, M, (W, y1 - y0), borderMode=cv2.BORDER_WRAP)
+        L = int(abs(blur * sp))
+        if L > 2: k = np.zeros((1, 2 * L + 1), np.float32); k[0, L:] = 1 if dx > 0 else 0; k[0, :L + 1] += 0 if dx > 0 else 1; sh = cv2.filter2D(sh, -1, k / k.sum())
+        out[y0:y1] = sh
+    return out
+def rgb(img, k):
+    if k < 1: return img
+    o = img.copy(); o[..., 2] = np.roll(img[..., 2], k, 1); o[..., 0] = np.roll(img[..., 0], -k, 1); return o
+def slice_tr(cut, seed=3, vertical=False):
+    """A's bands slide out with ease-in, B's bands slide in with ease-out: 3f out, 3f in"""
+    b = bands(seed)
+    for i, t in enumerate(range(cut - 3, cut + 3)):
+        if t < cut:
+            u = (i + 1) / 3.0; off = ease_io(u) ** 2 * W * 0.55; im = slide(under(t), b, off, off * 0.35)
+            yield t, rgb(im, int(2 + 6 * u))
+        else:
+            u = (t - cut) / 3.0; off = -(1 - ease_io(u + 0.34)) ** 2 * W * 0.55; im = slide(base(t), b, off, abs(off) * 0.35)
+            yield t, rgb(im, int(6 * (1 - u)))
+
+
+# ---------- v5d: depth-pixel heat with WIGGLE (wigglegram parallax) + tile depth ----------
+def _grid_edges(b, off):
+    yy, xx = np.mgrid[:H, :W]
+    gx = (xx + off[0]) % b; gy = (yy + off[1]) % b
+    hi = ((gx == 0) | (gy == 0)).astype(np.float32); lo = ((gx == b - 1) | (gy == b - 1)).astype(np.float32)
+    return hi, lo
+def heat_img(t, d, pal, b, seed=0):
+    """near pixels sway more (parallax wiggle on ~6f period), near blocks 2x bigger, bevelled tiles"""
+    ph = 2 * np.pi * (t % 6) / 6.0
+    ax, ay = 16.0 * np.sin(ph), 6.0 * np.cos(ph)
+    xx, yy = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    d = d.astype(np.float32); dw = cv2.remap(d, (xx - ax * (d - 0.35)).astype(np.float32), (yy - ay * (d - 0.35)).astype(np.float32), cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    r = np.random.default_rng(seed * 31 + t)
+    jit = (int(r.integers(0, b)), int(r.integers(0, b)))            # grid crawls a little each frame
+    def pixo(img, bb, off):
+        im = np.roll(np.roll(img, off[1], 0), off[0], 1); p = pix(im, bb); return np.roll(np.roll(p, -off[1], 0), -off[0], 1)
+    pf = pixo(dw, b, jit); pn = pixo(dw, b * 2, jit)
+    near = (pn > 0.55).astype(np.float32)
+    dq = np.round((pf * (1 - near) + pn * near) * 16) / 16
+    hm = heat(dq, pal, 1.1)
+    hf, lf = _grid_edges(b, jit); hn, ln = _grid_edges(b * 2, jit)
+    hi = hf * (1 - near) + hn * near; lo = lf * (1 - near) + ln * near
+    shade = 1 + 0.22 * hi - 0.35 * lo
+    return hm * shade[..., None]
+def heat_tr(cut, pal="fire", seed=0):
+    seq = [(cut - 5, 0.18, 6), (cut - 4, 0.45, 6), (cut - 3, 0.8, 8), (cut - 2, 1.0, 8), (cut - 1, 1.0, 10),
+           (cut, 1.0, 10), (cut + 1, 1.0, 8), (cut + 2, 0.75, 8), (cut + 3, 0.4, 6), (cut + 4, 0.12, 6)]
+    for t, frac, b in seq:
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        hm = heat_img(t, d, pal, b, seed)
+        if t < cut:
+            src = under(t)
+            if frac >= 0.999: yield t, enc(hm); continue
+            key = block_order(d, 16, seed, True); m = (key >= np.quantile(key, 1 - frac)).astype(np.float32)
+            yield t, enc(dec(src) * (1 - m[..., None]) + hm * m[..., None])
+        else:
+            src = base(t)
+            if frac >= 0.999: yield t, enc(hm); continue
+            key = block_order(d, 16, seed + 7, far_first=False); m = (key >= np.quantile(key, frac)).astype(np.float32)
+            yield t, enc(dec(src) * m[..., None] + hm * (1 - m[..., None]))
+
+
+# ---------- v5e: LED dot-matrix depth (inspo 0:05 / 0:27), wavy + wiggle ----------
+PAL.update({
+ "navy_led": [(0.0, (0.0, 0.0, 0.0)), (0.3, (0.012, 0.003, 0.0)), (0.55, (0.08, 0.02, 0.003)), (0.75, (0.35, 0.10, 0.02)), (0.9, (1.1, 0.55, 0.25)), (1.0, (2.4, 1.8, 1.4))],
+ "gray_led": [(0.0, (0.0, 0.0, 0.0)), (0.3, (0.012, 0.012, 0.012)), (0.55, (0.12, 0.12, 0.12)), (0.78, (0.65, 0.65, 0.65)), (0.92, (1.8, 1.8, 1.8)), (1.0, (2.8, 2.8, 2.8))],
+ "maize_led": [(0.0, (0.0, 0.0, 0.0)), (0.22, (0.01, 0.006, 0.0)), (0.45, (0.0, 0.10, 0.22)), (0.7, (0.02, 0.55, 0.95)), (0.88, (0.25, 1.5, 2.2)), (1.0, (1.6, 2.6, 3.0))],
+ "blue_led":  [(0.0, (0.0, 0.0, 0.0)), (0.25, (0.06, 0.005, 0.0)), (0.5, (0.45, 0.06, 0.0)), (0.75, (1.6, 0.45, 0.02)), (0.9, (2.6, 1.4, 0.4)), (1.0, (3.0, 2.6, 2.0))],
+})
+CELL = 6
+_yy, _xx = np.mgrid[:H, :W].astype(np.float32)
+_cx = ((_xx % CELL) - (CELL - 1) / 2) / CELL; _cy = ((_yy % CELL) - (CELL - 1) / 2) / CELL
+DOT = np.clip((0.44 - np.sqrt(_cx ** 2 + _cy ** 2)) / 0.08, 0, 1).astype(np.float32)        # round LED dots
+def led_depth(t, d, seed=0):
+    """wavy + wiggling depth, resampled on the LED grid"""
+    ph = 2 * np.pi * t / 7.0
+    dx = 9.0 * np.sin(2 * np.pi * _yy / 260.0 + ph) + 14.0 * np.sin(ph * 0.9) * (d - 0.3)      # rolling wave + parallax wiggle
+    dy = 6.0 * np.sin(2 * np.pi * _xx / 340.0 - ph * 1.3) + 5.0 * np.cos(ph * 0.9) * (d - 0.3)
+    dw = cv2.remap(d.astype(np.float32), (_xx - dx).astype(np.float32), (_yy - dy).astype(np.float32), cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    sm = cv2.resize(dw, (W // CELL, H // CELL), interpolation=cv2.INTER_AREA)
+    sm = sm + 0.012 * np.random.default_rng(seed * 13 + t).normal(size=sm.shape).astype(np.float32)   # LED shimmer
+    return cv2.resize(sm, (W // CELL * CELL, H // CELL * CELL), interpolation=cv2.INTER_NEAREST)[:H, :W] if W % CELL == 0 and H % CELL == 0 else cv2.resize(sm, (W, H), interpolation=cv2.INTER_NEAREST)
+def led_img(t, d, pal, seed=0):
+    dl = led_depth(t, d, seed)
+    hm = heat(dl, pal, 1.15)
+    glow = cv2.GaussianBlur(hm, (0, 0), 3.0)
+    return hm * DOT[..., None] + glow * 0.18
+_DG = {}
+def edge_arcs(L, core, m, rng, n, inten, width, pad=14, d=None):
+    """contour arcs only on real object silhouettes: not on the frame border, and only where depth jumps (not floor bands)"""
+    cs, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cs: return
+    c = max(cs, key=len)[:, 0, :].astype(float); N = len(c)
+    ok = (c[:, 0] > pad) & (c[:, 0] < W - pad) & (c[:, 1] > pad) & (c[:, 1] < H - pad)
+    if d is not None:
+        g = cv2.GaussianBlur(np.hypot(cv2.Sobel(d, cv2.CV_32F, 1, 0, ksize=5), cv2.Sobel(d, cv2.CV_32F, 0, 1, ksize=5)), (0, 0), 3)
+        gv = g[c[:, 1].astype(int).clip(0, H - 1), c[:, 0].astype(int).clip(0, W - 1)]
+        ok &= gv > np.quantile(g, 0.9)
+    idx = np.where(ok)[0]
+    if len(idx) < 40: return
+    for _ in range(n):
+        i = rng.choice(idx); Ln = int(rng.uniform(40, 150)); ids = (i + np.arange(0, Ln, 5)) % N
+        bad = np.where(~ok[ids])[0]; ids = ids[: bad[0]] if len(bad) else ids
+        if len(ids) < 4: continue
+        p = c[ids]; d = np.gradient(p, axis=0); nr = np.stack([-d[:, 1], d[:, 0]], 1); nr /= np.linalg.norm(nr, axis=1, keepdims=True) + 1e-6
+        p = p + nr * rng.uniform(1, 5) + rng.normal(0, 2.2, p.shape)
+        L.draw(core, [(p, width, width * 0.4, inten)])
+def near_mask(d, q=0.86):
+    m = (cv2.GaussianBlur(d, (0, 0), 3) > np.quantile(d, q)).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m)
+    keep = np.zeros_like(m)
+    for i in range(1, n):                                     # drop thin edge slivers (tunnel wall etc.)
+        x, y, w, h, a = st[i]
+        if a > 4000 and w > 150 and h > 150: keep[lab == i] = 1
+    return keep
+def strike_on(lin, d, t, cut, seed, L):
+    """goal-grammar lightning on the LED snap: charge arcs (cut-1), strike into the nearest object (cut), held restrike + crackle (cut+1..+3)"""
+    k = t - cut
+    if k < -2 or k > 7: return lin
+    rng = np.random.default_rng(seed * 7 + t // 2); core = np.zeros((H, W), np.float32)
+    nm = near_mask(d); spill = 0.25; wfl = 0.0
+    ys, xs = np.nonzero(nm); c = np.array([np.median(xs), ys.min() + 6.0]) if len(xs) else np.array([960.0, 420.0])
+    geo = L.channel(np.array([c[0] + np.random.default_rng(seed).uniform(-300, 300), -40.0]), c, np.random.default_rng(seed + 1), rough=0.17, branch=1.2, w0=9.0, i0=1.0)
+    if k < 0: edge_arcs(L, core, nm, rng, 5 + 4 * (k + 2), 0.35 + 0.25 * (k + 2), 2.0, d=d)
+    elif k == 0: L.draw(core, geo); edge_arcs(L, core, nm, rng, 8, 0.8, 2.4, d=d); spill = 1.1; wfl = 0.3
+    else:
+        e = (0.55, 0.9, 0.45, 0.75, 0.3, 0.5, 0.15)[k - 1]; L.draw(core, [(p, a, b, i * e) for p, a, b, i in geo]); edge_arcs(L, core, nm, rng, 4, 0.35 + 0.4 * e, 1.8, d=d); spill = 0.5 * e
+    core *= float(np.clip(np.random.default_rng(900 + t).normal(1, 0.2), 0.65, 1.3))
+    alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
+    return lin + L.finish(core, alb, None, spill, 0.0, refl_gain=0.0, white_flash=wfl, bg_lin=lin)
+def led_tr(cut, pal="maize_led", seed=0, bolt=True):
+    """footage dissolves into LED depth cell-by-cell (far first), LED holds + waves, snaps to B's LED (lightning strike), B returns near-first"""
+    L = _L() if bolt else None
+    seq = [(cut - 6, 0.12), (cut - 5, 0.35), (cut - 4, 0.7), (cut - 3, 1.0), (cut - 2, 1.0), (cut - 1, 1.0),
+           (cut, 1.0), (cut + 1, 1.0), (cut + 2, 1.0), (cut + 3, 1.0), (cut + 4, 1.0), (cut + 5, 0.75), (cut + 6, 0.45), (cut + 7, 0.2), (cut + 8, 0.06)]
+    for t, frac in seq:
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        d = np.minimum(d, cv2.dilate(cv2.erode(d, np.ones((1, 181), np.float32), borderType=cv2.BORDER_CONSTANT, borderValue=0), np.ones((1, 181), np.float32), borderType=cv2.BORDER_REFLECT) + 0.08)
+        hm = led_img(t, d, pal, seed)
+        src = under(t) if t < cut else base(t)
+        if frac >= 0.999: lin = hm
+        else:
+            key = block_order(cv2.GaussianBlur(d, (0, 0), 6), CELL, seed + (0 if t < cut else 7), far_first=(t < cut), rnd=0.08)
+            m = (key >= np.quantile(key, 1 - frac)).astype(np.float32)
+            lin = dec(src) * (1 - m[..., None]) + hm * m[..., None]
+        if bolt: lin = strike_on(lin, d, t, cut, seed, L)
+        yield t, enc(lin)
+# ---------- v5e: DEPTH-PARALLAX PUSH (near layers move faster than far; motion-blurred) ----------
+def dpush(img, d, amt, dirv, zoom, n=8):
+    """virtual camera orbit + dolly: near and far layers move OPPOSITE ways around a pivot at mid-depth"""
+    acc = np.zeros_like(img)
+    dd = cv2.GaussianBlur(np.clip(d, 0, 1).astype(np.float32), (0, 0), 28); piv = float(np.median(dd))
+    par = np.clip((dd - piv) * 1.1, -0.35, 0.35)                                   # signed parallax (near +, far -)
+    wz = 0.2 + 0.8 * dd ** 1.4                               # dolly weight (near grows faster)
+    for i in range(n):
+        k = amt * (i + 1) / n
+        mx = _xx - dirv[0] * k * W * par - (_xx - W / 2) * zoom * k * wz
+        my = _yy - dirv[1] * k * H * par - (_yy - H / 2) * zoom * k * wz
+        acc += cv2.remap(img, mx.astype(np.float32), my.astype(np.float32), cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return acc / n
+def dpush_tr(cut, seed=3, dirv=(1.0, 0.0)):
+    dv = np.array(dirv, np.float32)
+    for t, u in ((cut - 3, 0.025), (cut - 2, 0.08), (cut - 1, 0.2)):
+        d = depth(t); yield t, enc(dpush(dec(under(t)), d, u, dv * 0.9, 0.45, 28))
+    for t, u in ((cut, 0.18), (cut + 1, 0.07), (cut + 2, 0.02)):
+        d = depth(t); yield t, enc(dpush(dec(base(t)), d, -u, dv * 0.9, 0.45, 28))
+
+
+# ---------- v5e ENDING: fans -> maize LED depth on the downbeat (lightning restrike) -> LED holds/waves -> dots switch off ----------
+def _L():
+    import importlib; cwd = os.getcwd(); sys.path.insert(0, G + "/puck-lightning/tools"); L = importlib.import_module("lightning_v5"); os.chdir(cwd); return L
+BM = G + "/m-logo/blockm_depth_exr/bm_%04d.exr"
+def m_depth(t, drop=479):
+    """Block M depth (near=1) + alpha for tl t (render f1 = drop)"""
+    f = min(t - drop + 1, 13)                                   # freezes on the strike (f13 = lock)
+    if f < 1 or not os.path.exists(BM % f): return None, None
+    sys.path.insert(0, G + "/tools"); from read_rgba import read_rgba
+    rgb, A = read_rgba(BM % f); z = rgb[..., 0]
+    return np.clip(0.55 + (z - 0.33) * 1.1, 0, 1).astype(np.float32) * (A > 0.02), A.astype(np.float32)
+def end_tr(drop=479, lock=491, off=515, last=526, pal="navy_led", seed=5):
+    L = _L()
+    for t in range(467, drop):                                   # slow depth push-in on the fans (near grows faster)
+        d = depth(t); u = (t - 467) / (drop - 467)
+        yield t, enc(dpush(dec(base(t)), d, 0.02 + 0.06 * u * u, np.array([0.0, 0.0], np.float32), 0.9, 16))
+    for t in range(drop, last + 1):
+        d = depth(t); md, A = m_depth(t, drop)
+        dd = d * 0.72
+        hm = led_img(t, dd, pal, seed)                               # crowd field waves + wiggles
+        if md is not None:                                         # Block M: crisp (no wave), same LED dots, lit by depth
+            yy = np.linspace(0, 1, H, dtype=np.float32)[:, None]
+            mz = np.clip(md * (0.92 + 0.08 * (1 - yy)), 0, 1)
+            sm = cv2.resize(mz, (W // CELL, H // CELL), interpolation=cv2.INTER_AREA)
+            mq = cv2.resize(sm, (W, H), interpolation=cv2.INTER_NEAREST)
+            mh = heat(mq, pal, 1.15); mh = mh * DOT[..., None] + cv2.GaussianBlur(mh, (0, 0), 3.0) * 0.18
+            a = cv2.GaussianBlur(A, (0, 0), 1.0)[..., None]
+            cz = {lock: 1.0}.get(t, 1.0 if t > lock else 0.0)      # zapped -> Michigan maize + navy
+            if cz > 0:
+                MAIZE = np.array([0.0015, 0.47, 1.0], np.float32) * 1.7         # #FFCB05 (BGR, linear)
+                NAVY = np.array([0.072, 0.020, 0.0], np.float32) * 2.2           # #00274C
+                mc = MAIZE * np.ones_like(mq)[..., None]                       # flat 2D logo: no depth shading
+                mc = mc * DOT[..., None] + cv2.GaussianBlur(mc, (0, 0), 3.0) * 0.22
+                mh = mh * (1 - cz) + mc * cz
+                ring = np.clip(cv2.dilate((A > 0.5).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))).astype(np.float32) - (A > 0.5), 0, 1)
+                ring = cv2.GaussianBlur(ring, (0, 0), 1.0)[..., None] * cz
+                hm = hm * (1 - ring) + (NAVY[None, None, :] * np.ones((H, W, 1), np.float32)) * ring
+            if t >= lock:                                                    # 2D: crisp solid fill, no LED dots on the M
+                mh = MAIZE[None, None, :] * np.ones((H, W, 1), np.float32)
+            hm = hm * (1 - a) + mh * a
+            dd = np.maximum(dd, md * (A > 0.5))
+        rng = np.random.default_rng(700 + t // 2); core = np.zeros((H, W), np.float32); spill = 0.0; wfl = 0.0
+        mm = (A > 0.5).astype(np.uint8) if A is not None else None
+        if t == drop:                                            # drop: strike into the crowd as it turns to LED
+            nm = near_mask(d); ys, xs = np.nonzero(nm); c = np.array([np.median(xs), ys.min() + 5.0])
+            L.draw(core, L.channel(np.array([c[0] + 220, -40.0]), c, np.random.default_rng(91), rough=0.17, branch=1.0, w0=6.0, i0=1.0)); spill = 1.0; wfl = 0.3
+        if mm is not None and mm.sum() > 2000:
+            k = t - lock
+            ys, xs = np.nonzero(mm); top = np.array([xs.mean(), ys.min() + 4.0])
+            if -3 <= k < 0: edge_arcs(L, core, mm, rng, 4 + 3 * (k + 3), 0.4 + 0.15 * (k + 3), 1.6)
+            elif k == 0:
+                geo = L.channel(np.array([top[0] - 260, -40.0]), top, np.random.default_rng(1491), rough=0.17, branch=1.1, w0=7.0, i0=1.0)
+                L.draw(core, geo); edge_arcs(L, core, mm, rng, 26, 1.0, 2.8); spill = 1.2; wfl = 0.35
+            elif 0 < k <= 22:
+                e = 0.88 ** k
+                if k in (1, 3, 9):
+                    geo = L.channel(np.array([top[0] - 260, -40.0]), top, np.random.default_rng(1491), rough=0.17, branch=1.1, w0=6.0, i0=0.8 * e + 0.2)
+                    L.draw(core, geo)
+                edge_arcs(L, core, mm, rng, int(5 + 14 * e), 0.3 + 0.6 * e, 1.5 + e); spill = 0.5 * e
+        lin = hm
+        if core.max() > 0:
+            core *= float(np.clip(np.random.default_rng(900 + t).normal(1, 0.2), 0.65, 1.3))
+            alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
+            lin = lin + L.finish(core, alb, None, spill, 0.0, refl_gain=0.0, white_flash=wfl, bg_lin=lin)
+        if t >= off:
+            frac = ss((t - off + 1) / (last - off + 1)) ** 0.8
+            key = block_order(cv2.GaussianBlur(dd, (0, 0), 6), CELL, seed + 3, far_first=True, rnd=0.15)
+            m = (key >= np.quantile(key, 1 - frac)).astype(np.float32) if frac < 0.999 else np.ones_like(d)
+            lin = lin * (1 - m[..., None]) + (-0.003) * m[..., None]
+        yield t, enc(lin)
+
+# ---------- plan (tl cut -> transition) ----------
+def ink_tr(cut, n_out=4, n_in=4, seed=1):
+    A = under(cut - 1)
+    for i, t in enumerate(range(cut - n_out, cut + n_in)):
+        u = (i + 0.5) / (n_out + n_in)
+        a = under(t) if t < cut else zoom(A, 1.0 + 0.01 * (t - cut + 1))
+        b = under(t) if t >= cut else under(cut)
+        yield t, ink(a if u < 0.5 else a, b, u, seed)
+def drip_tr(cut, n_out=3, n_in=4, seed=2):
+    for i, t in enumerate(range(cut - n_out, cut + n_in)):
+        u = (i + 0.5) / (n_out + n_in)
+        a = under(min(t, cut - 1)); b = under(max(t, cut))
+        yield t, drip(a, b, u, seed)
+def smear_tr(cut, seed=3, vertical=True):
+    a1, a2 = under(cut - 2), under(cut - 1); b1, b2, b3 = under(cut), under(cut + 1), under(cut + 2)
+    yield cut - 2, smear(a1, seed, 0.45, vertical)
+    yield cut - 1, glitch(smear(a2, seed + 1, 0.85, vertical), seed + 2, 6, 0.1)
+    yield cut, smear(b1, seed + 3, 0.55, vertical, up=True)
+    yield cut + 1, glitch(b2, seed + 5, 4, 0.0)
+    yield cut + 2, smear(b3, seed + 6, 0.2, vertical, up=True)
+def glitch_cut(cut, seed=5):
+    yield cut, glitch(under(cut), seed, 7, 0.15)
+PLAN = [(led_tr, 48, dict(pal="navy_led", seed=11)), (led_tr, 239, dict(pal="navy_led", seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
+        (dpush_tr, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr, 384, dict(seed=71, dirv=(0.0, -1.0))),
+        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr, 431, dict(pal="navy_led", seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+if __name__ == "__main__":
+    want = set(int(x) for x in sys.argv[1:])
+    done = []
+    for fn, cut, kw in PLAN:
+        if want and cut not in want: continue
+        for t, im in fn(cut, **kw):
+            cv2.imwrite(OUT % t, (np.clip(im, 0, 1) * 65535 + 0.5).astype(np.uint16)); done.append(t)
+    print("baked", len(done), sorted(done)[:4], sorted(done)[-4:])

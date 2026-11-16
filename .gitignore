@@ -1,0 +1,10 @@
+*.exr
+*.png
+*.jpg
+*.mov
+*.mp4
+*.mxf
+*.MXF
+*.blend
+*.blend1
+__pycache__/
