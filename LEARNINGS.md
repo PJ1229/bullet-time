@@ -51,32 +51,26 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - **Downloaded models need cleanup:** two goals, emissive faceoff dots (find them by ray-casting from the camera through the bad pixel).
 - **Long renders:** start with `bpy.app.timers.register(... INVOKE_DEFAULT ...)` and poll the output folder.
 
-## 4. Transitions (mentor + PJ feedback)
-- Mentor: more **action** in the back half, and **no black frames**. Done:
-  - goal and save clips swapped in for standing shots;
-  - white flashes only;
-  - no ink holds on black.
-- **What PJ liked (the hockey inspo reel grammar):**
-  - **LED depth map** (`led_tr`): the depth map seen through a 6 px round-dot LED matrix, **navy**, with a rolling wave and a parallax wiggle. Cells sweep in far-first and out near-first. A **maize** lightning strike lands on the snap.
-    - **Give it time:** ~31 frames (5 in, ~1 s hold, 5 out). Shorter and you can't see the lightning.
-    - **Normalise depth per frame**, or mostly-far shots (a tunnel) go black.
-    - **Re-form the bolt channel every 3-frame restrike**; a channel held for 15 frames looks frozen.
-  - **Depth orbit push** (`dpush_tr`): near and far layers move opposite ways around a mid-depth pivot, plus a dolly, with 28-sample motion blur. Blur the depth (σ≈28) and clamp the parallax, or near objects leave white holes.
-- **Rejected:**
-  - drip wipes;
-  - organic noise mattes;
-  - big blocks;
-  - hard glitch blocks and pixel smears ("too in your face");
-  - band-slide "kinetic" slices (no depth);
-  - a cheesy 3D logo sting.
-- **Ending:**
-  1. Fans push in.
-  2. They drop into the LED field on the downbeat (strike).
-  3. The official Block M (an STL from Printables) rises out of the depth field.
-  4. The bolt zaps it: it **freezes, goes flat 2D and turns solid maize (#FFCB05) with a navy outline**.
-  5. Crackle.
-  6. The LED dots switch off.
-- **Depth maps:** Depth Anything V2 ONNX on PJ's Mac (`~/Documents/claude-tools/depth-model`), run through Blender's Python. Hugging Face is blocked from Claude's shells.
+## 4. Transitions (final v22 — and the road there)
+- Mentor: more **action** in the back half, and **no black frames**. Done: goal/save clips instead of standing shots, white flashes only, no ink holds on black.
+- **Final set (`bake_v5_transitions.py` PLAN):**
+  - **Pixel-sort drip** (`psort_tr`) — PJ's favourite ("heavy"). Column-stretch: below a per-column row y0 the column repeats its y0 pixel; y0 banded per ~12 px column group so it reads as sorted drips. Clip A drips into a full navy sorted frame on the beat, clip B bleeds out of the drips, maize strike lands 4 frames later. 48 drips **up** (`up=True`), 239 drips down, so they don't repeat.
+  - **Depth orbit push** (`dpush_tr`): near and far layers move opposite ways around a mid-depth pivot + dolly, 28-sample motion blur. Blur the depth (σ≈28) and clamp parallax or near objects leave holes.
+  - **Charge-up chain** (`dpush_tr2`) built from the push PJ loved at 0:16: 341→365→384→408 at 0.7/0.85/1.0/1.3× with maize crackle on the near subject growing each time, paying off at 431 (`payoff_tr`: 1.6× push + full strike).
+- **Tried and dropped** (so we don't redo them): ink/drip wipes, organic mattes, big blocks, hard glitch, band slides, a 3D logo sting, LED-dot depth-map transitions (v13–v20: never got close enough to the Huntington reference — muddy melts, footage texture bleeding through, dots too big/too fine), the roto-cutout and window/square moves from PJ's IG reel (v21).
+- **Lessons from the dot saga:**
+  - Compare against the reference **frame by frame at matching phases** (in / hold / out) before iterating — it showed the ref hard-cuts into depth, holds pure high-contrast depth, and exits with a streak; we'd been melting.
+  - When PJ likes one look (the Block M LED field), reuse that exact code path rather than re-deriving a similar one.
+  - Tinting bright ice "navy→maize by luma" goes sepia. Keep navy dominant, maize only in highlights (luma > ~0.62).
+  - Depth subject mattes: normalise, threshold, keep tall components, and never let the mask shrink frame-to-frame (a dropped mask = a black flash frame).
+- **Ending:** fans push in → drop into the navy LED field on the downbeat (strike) → the official Block M (Printables STL) rises out of it → the bolt zaps it: it **freezes, goes flat 2D, solid maize #FFCB05 with a navy outline** → crackle → dots switch off.
+- **Depth maps:** Depth Anything V2 ONNX on PJ's Mac (`~/Documents/claude-tools/depth-model`), run via Blender's Python (Popen, never blocking). Hugging Face is blocked from Claude's shells.
+
+## 4b. The "weird cuts / timing glitches" bug
+- The master stacks V4 lightning > goal FX > bake_v5 > bake_v4 > base. **bake_v4 was baked before the song was extended a bar** and never re-baked; wherever v5 didn't cover it, frames from the wrong moment showed (216–238 ~8f off, 312–334 ~7f off, old punch-zooms at 380/463–466 jumping into the next transition). The v5 baker was also sampling it.
+- Found by correlating each v4 frame against base at offsets −8..+8 (downscaled gray, cached). < 0.75 at offset 0 = out of sync.
+- Fix: `assemble.py` skips a `V4BAD` set; the baker reads base only.
+- **Rule: after any re-time of the base, re-validate or delete every older bake layer.** Never let a lower layer silently fill gaps.
 
 ## 5. Resolve API gotchas
 - **Image sequences:** place with `startFrame=a, endFrame=b+1` (sequence numbers), not 0..N. It "succeeds" with a negative offset and shows nothing. Verify by diffing exported frames.
@@ -97,33 +91,7 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
   - `graphics/inspo-transitions/tools/bake_v5_transitions.py` — all depth transitions and the ending
   - `graphics/master_v4/` — log master assembly
   - `graphics/tools/` — EXR→S-Log3, viewers
+- **Deliverables (TOSHIBA `06_deliverables/`):** `hockey_prospect_v22_LOG_master_prores4444xq.mov` (final, S-Log3), `hockey_prospect_v22_TESTGRADE_preview_small.mp4`, `stills_v22_LOG/` (17 × 16-bit S-Log3 TIFF for posting).
 - **Notes:**
   - `notes/STORYBOARD_v3_PROSPECT.md` — the running changelog of every version
   - `notes/TRANSITIONS_v*.md`
-
-## v17 → v18: match the reference's *structure*, not just its texture
-- Comparing frame by frame with the Huntington ref: it **hard-cuts** into the depth look on the beat (or whip smear → 1 blue glitch frame → depth). Slow depth-ordered melts made muddy half-states — dropped.
-- Depth sections are **pure depth** (no footage luma bleeding through), high-contrast: far crushes toward black, people glow saturated, only the nearest parts approach white. Cap the value (~0.86) so near subjects stay blue, not pale gray.
-- Dot grid must have **dark gaps** to read (5px cell, dot radius 0.40, sharp edge) — 4px soft dots vanished.
-- Hold one depth scene per clip; on the cut, hard-switch depth A → depth B under the maize strike. Exit with a horizontal row streak (ref f176), then clean footage with a decelerating whip.
-- Always build a REF-vs-ours strip at matching phases (in / hold / out) before iterating.
-
-## v19: the "weird cuts / timing glitches" were a stale layer, not the transitions
-- The master stacks V4 lightning > goal FX > bake_v5 > bake_v4 > base. bake_v4 was baked BEFORE the song was extended a bar and never re-baked, so wherever v5 didn't cover it, old frames from the wrong clip moment showed through (216–238 ~8f off, 312–334 ~7f off, plus old punch-zooms at 380 / 463–466 that jumped into the next transition).
-- Found it by correlating every v4 frame against base at offsets −8..+8 (downscaled gray, cached base). Anything < 0.75 at offset 0 = out of sync.
-- Fix: `assemble.py` skips a V4BAD set; `under(t)` in the v5 baker now always reads the real base (the whip-in frames were sampling the stale layer too).
-- Rule: after ANY re-time of the base, re-validate or delete every older bake layer — never let a lower layer silently fill gaps.
-- Look: transitions now reuse the Block-M ending's LED field (`led_img` + `navy_led`, 6px dots, wave + parallax wiggle) — PJ's favourite — via `ledM()`; ref structure kept (whip → smear frame → hard-cut depth hold → maize strike on the cut → streak out → clean footage).
-
-## v20–v21: dropped the LED-dot transitions for PJ's reel-intro grammar
-- PJ: dot transitions "not the best unless like the reference" → replaced with moves from his IG reel intro (whip, roto cutout on black + sparkles with the next scene torn in, block glitch, mosaic resolve, pixel-sort drip melt, colour-rectangle hit + picture-in-picture window). Translated red → maize/navy; lightning kept on every landing.
-  - 48 `cutout_tr`: tunnel players isolated on black + sparkles, #71 tears in behind them (B's near_mask), maize bar + block glitch on the beat, mosaic 48→24→10→4 → strike.
-  - 239 `psort_tr`: column-stretch drip (below a per-column row y0 the column repeats its y0 pixel; banded y0 = pixel-sort look), navy tint with maize only in highlights → full navy sorted frame on the beat → fan clip bleeds out of the drips, strike.
-  - 431 `window_tr`: whip → maize rectangle on the cut → clip B in a window on navy-black that opens to full → strike. Payoff of the charge chain.
-- Charge-up chain (PJ loved the 0:16 / 384 depth push): `dpush_tr2` at 341→365→384→408 with push strength 0.7/0.85/1.0/1.3 and maize crackle on the near subject growing each push, resolving into the 431 reveal.
-- Subject mattes from depth: normalise depth, threshold, keep tall/sizable components, and never let the mask shrink frame-to-frame (take the fullest of the next 3 frames) — a dropped mask = a black flash frame.
-- Sepia trap: tinting bright ice "navy→maize by luma" turns everything brown. Keep navy dominant, maize only for luma > ~0.62.
-
-## v22
-- PJ: the pixel-sort drip (239) is the keeper — "heavy". 48 is now a second pixel-sort, mirrored to drip UP (`psort_tr(..., up=True)`) so the two don't repeat.
-- Square/window transition (431) faded out. The charge chain (341→365→384→408) now pays off at 431 with `payoff_tr`: the strongest depth push (1.6×) + a full maize strike, no box.

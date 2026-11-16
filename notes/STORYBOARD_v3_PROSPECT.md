@@ -173,3 +173,10 @@ PJ notes: transitions boring, lightning weird except goal, no drip, pixel heatma
 - Ending: fans → navy LED (strike on 479) → official Block M (Printables STL, `m-logo/blockm_led_v01.blend`, depth render `blockm_depth_exr`) rises out of the field → struck at 491: freezes, goes flat 2D, solid maize #FFCB05 + navy outline → crackle → LED dots switch off.
 - Audio: zaps at 48/239/431/491, crackle bed under each LED hold (−15 dB).
 - Deliverables: hockey_prospect_v16_LOG_master_prores4444xq.mov + _TESTGRADE_preview_small.mp4. Repo: github.com/PJ1229/bullet-time.
+
+## v22 — FINAL CUT ("Bullet Time") — 2026-11-16
+- Transitions: 48 upward pixel-sort drip (strike 52) · 239 downward drip (strike 243) · 287/455 depth push · 341→365→384→408 charge-up push chain · 431 payoff push + strike · 467 Block M ending.
+- Dropped: LED-dot depth transitions (v17–v20), cutout + window/square (v21).
+- Fixed timing: stale bake_v4 frames excluded (V4BAD 216–238, 312–334, 380, 455–466); baker reads base only.
+- Resolve prospect_v5_cut: V5 TRANS_v5 re-imported (bin 07_trans_v22); A14 heat sweeps 30–49 / 221–240, crackle 52–64 / 243–255 / 431–443, chargeup 421–431; A5 zaps at 52 / 243 / 408.
+- Deliverables: hockey_prospect_v22_LOG_master_prores4444xq.mov · v22 test-grade preview · stills_v22_LOG/ (17 × 16-bit S-Log3 TIFF).

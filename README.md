@@ -13,9 +13,9 @@ PJ Kim's Michigan hockey hype edit, cut to "Prospect" (ft. Lil Baby): 16:9, 23.9
   - a Blender bullet-time orbit around the goalie, inside the real arena model;
   - a restrike back to the plate and the score hit.
 - **Big hit (256–280):** charge on #17, then one strike at contact, held with restrikes.
-- **Transitions:**
-  - an LED dot-matrix depth map (Depth Anything V2) with a wave and a wiggle, and a lightning strike on the snap;
-  - a depth-parallax orbit push.
+- **Transitions (final v22):**
+  - pixel-sort drip melts (tunnel → #71 drips up, #44 cele → fan drips down), each landing on a maize lightning strike;
+  - a depth-parallax orbit push (Depth Anything V2 depth), chained four times as a charge-up (341 → 408) that pays off with the heaviest push and a full strike at 431.
 - **Ending:**
   1. Fans drop into the LED depth field.
   2. The official Block M rises out of it.
