@@ -606,6 +606,180 @@ def led_tr4(cut, seed=0, bolt=True):
         if bolt and k >= -6: lin = strike_on(lin, d, t, cut, seed, L)
         yield t, enc(lin)
 
+
+# ---------- v20: LED covers ONE clip (the incoming one), people pop; dpush charge-up chain -> LED reveal ----------
+def ledP(t, d, seed=0):
+    """Block-M LED field, but people lifted: local depth contrast added before the LED quantise"""
+    dn = ndepth(d)
+    loc = dn - cv2.GaussianBlur(dn, (0, 0), 70); loc = np.clip(loc / (np.quantile(np.abs(loc), 0.995) + 1e-4), -1, 1)
+    dp = np.clip(0.62 * dn + 0.42 * np.maximum(loc, 0) - 0.06 * np.maximum(-loc, 0) + 0.04, 0, 1)
+    return led_img(t, dp, "navy_led", seed)
+def led_tr5(cut, seed=0, hold=10, bolt=True):
+    L = _L() if bolt else None
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        if k < 0:                                              # clip A plays clean; last 2f whip; lightning charges on A's subject
+            foot = dec(base(t))
+            lin = whip(foot, {-2: 70, -1: 200}.get(k, 0), (1, 0))
+            if bolt and k >= -6: lin = strike_on(lin, depth(t), t, cut, seed, L)
+            yield t, enc(lin); continue
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        if k < hold:                                           # hard cut on the beat into clip B as LED depth, strike lands
+            lin = ledP(t, d, seed) * (1.0 + 0.5 * max(0, 1 - k))
+            if bolt: lin = strike_on(lin, d, t, cut, seed, L)
+        elif k < hold + 2:                                     # streak out
+            lin = streak(ledP(t, d, seed), (140, 420)[k - hold], seed + k) * (0.85, 0.5)[k - hold]
+            if bolt: lin = strike_on(lin, d, t, cut, seed, L)
+        else:                                                  # reveal clip B footage, decelerating whip
+            lin = whip(dec(base(t)), {hold + 2: 160, hold + 3: 50}.get(k, 0), (-1, 0))
+        yield t, enc(lin)
+CHARGE = {341: 0.7, 365: 0.85, 384: 1.0, 408: 1.3}             # escalating pushes into the 431 LED reveal
+def dpush_tr2(cut, seed=3, dirv=(1.0, 0.0)):
+    g = CHARGE.get(cut, 1.0); stage = sorted(CHARGE).index(cut) if cut in CHARGE else -1
+    L = _L(); dv = np.array(dirv, np.float32)
+    seq = [(cut - 3, 0.025, False), (cut - 2, 0.08, False), (cut - 1, 0.2, False), (cut, -0.18, True), (cut + 1, -0.07, True), (cut + 2, -0.02, True)]
+    for t, u, post in seq:
+        d = depth(t); src = dec(base(t))
+        lin = dpush(src, d, u * g, dv * 0.9, 0.45, 28)
+        if stage >= 0:                                         # crackle grows each push: the edit is charging
+            k = t - cut; e = (0.35, 0.55, 0.75, 1.0)[stage] * (1.0 if k in (-1, 0) else 0.5)
+            nm = near_mask(d); rng = np.random.default_rng(seed * 11 + t); core = np.zeros((H, W), np.float32)
+            edge_arcs(L, core, nm, rng, int(3 + 7 * e), 0.3 + 0.6 * e, 1.4 + 1.2 * e, d=d)
+            if core.max() > 0:
+                alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
+                lin = lin + L.finish(core, alb, None, 0.35 * e, 0.0, refl_gain=0.0, white_flash=0.12 * e if k == 0 else 0.0, bg_lin=lin)
+        yield t, enc(lin)
+
+
+# ---------- v21: reel-intro grammar (PJ ref "Instagram Reels Downloader.mp4"), Michigan colours ----------
+MZ = np.array([0.0015, 0.47, 1.0], np.float32) * 1.7      # maize (linear BGR)
+NV = np.array([0.072, 0.020, 0.0], np.float32) * 2.2       # navy
+BLK = np.float32(0.0012)
+def _shift(a, s, axis):
+    out = np.empty_like(a)
+    if axis == 0: out[s:] = a[:-s]; out[:s] = a[:1]
+    else: out[:, s:] = a[:, :-s]; out[:, :s] = a[:, :1]
+    return out
+def sparkles(seed, t, n=70):
+    rng = np.random.default_rng(seed); m = np.zeros((H, W), np.float32)
+    xs = rng.integers(0, W, n); ys = rng.integers(0, H, n); ph = rng.uniform(0, 6.28, n)
+    for x, y, p in zip(xs, ys, ph): m[y, x] = 0.5 + 0.5 * np.sin(p + t * 0.9)
+    return cv2.GaussianBlur(m, (0, 0), 1.6) * 60 + cv2.GaussianBlur(m, (0, 0), 6) * 25
+def shard_mask(seed, frac, t):
+    """torn cut-out pieces of the next scene (upper/side areas), more as frac grows"""
+    nf = noise_field(seed + 7, ((180, 1.0), (60, 0.5), (18, 0.25)))
+    nf = (nf - nf.min()) / (np.ptp(nf) + 1e-6)
+    yy = np.linspace(1, 0, H, dtype=np.float32)[:, None]
+    key = nf * 0.75 + yy * 0.25
+    th = np.quantile(key, 1 - 0.07 - 0.38 * frac)
+    m = (key > th).astype(np.float32)
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    return m
+def subj(d, th=0.55):
+    dn = ndepth(cv2.GaussianBlur(d.astype(np.float32), (0, 0), 2))
+    m = (dn > th).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m); keep = np.zeros_like(m)
+    for i in range(1, n):
+        x, y, w, h, a = st[i]
+        if a > 6000 and w > 60 and h > 120 and w < W * 0.9: keep[lab == i] = 1
+    keep = cv2.morphologyEx(keep, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    return cv2.GaussianBlur(keep.astype(np.float32), (0, 0), 1.2)
+def cutout_tr(cut, seed=0):
+    """48: subject isolated on black + sparkles -> shards of clip B behind -> maize block glitch on the beat -> mosaic resolve -> strike"""
+    L = _L()
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        if k < -7 or k > 4:
+            lin = dec(base(t))
+            if k > 4: lin = strike_on(lin, depth(t), t, cut + 5, seed, L)
+            yield t, enc(lin); continue
+        if k < 0:
+            A = dec(base(t)); ma = subj(depth(t))
+            for o in (1, 2, 3):                                    # subject mask must not shrink/flicker: take the fullest nearby
+                if t + o < cut:
+                    mm = subj(depth(t + o))
+                    if mm.mean() > ma.mean() * 1.4: ma = mm
+            if ma.mean() < 0.03:                                   # mask dropout -> reuse a neighbour's (no black flash frames)
+                for o in (1, -1, 2, -2, 3):
+                    mm = subj(depth(t + o))
+                    if mm.mean() >= 0.03: ma = mm; break
+            ma = ma[..., None]
+            bg = np.full_like(A, BLK) + sparkles(seed, t)[..., None] * 0.09 * np.array([1.0, 0.9, 0.7], np.float32)
+            if k >= -4:
+                Bf = dec(base(cut + 1)); mb = cv2.GaussianBlur(cv2.dilate(near_mask(depth(cut + 1)).astype(np.float32), np.ones((15, 15), np.uint8)), (0, 0), 2)
+                tear = shard_mask(seed, 0.25 + 0.75 * (k + 5) / 4.0, t)
+                sm = (mb * cv2.dilate(tear, np.ones((25, 25), np.uint8)))[..., None] * (0.55 + 0.45 * (k + 5) / 4.0)
+                bg = bg * (1 - sm) + Bf * sm
+            yield t, enc(bg * (1 - ma) + A * ma); continue
+        Bf = dec(base(t))
+        if k == 0:                                                     # maize bar + block glitch
+            A = dec(base(cut - 1)); ma = subj(depth(cut - 1))[..., None]; sm = cv2.dilate(near_mask(depth(cut + 1)).astype(np.float32), np.ones((15, 15), np.uint8))[..., None]
+            img = (np.full_like(A, BLK) * (1 - sm) + Bf * sm) * (1 - ma) + A * ma
+            rng = np.random.default_rng(seed + 3)
+            img[:int(H * 0.17)] = MZ
+            for _ in range(10):
+                x = int(rng.integers(0, W - 200)); y = int(rng.integers(0, H - 120)); w = int(rng.integers(60, 260)); h = int(rng.integers(30, 120))
+                img[y:y + h, x:x + w] = pix(Bf, 40)[y:y + h, x:x + w]
+            yield t, enc(img); continue
+        lin = pix(Bf, (48, 24, 10, 4)[k - 1])                         # mosaic resolve
+        if k >= 3: lin = strike_on(lin, depth(t), t, cut + 5, seed, L)
+        yield t, enc(lin)
+def psort(img, amt, seed):
+    """column-stretch drip (pixel-sort look): below a per-column row y0 the column repeats its y0 pixel -> streaks"""
+    rng = np.random.default_rng(seed)
+    nb = W // 12
+    r = rng.random(nb).astype(np.float32); r = cv2.resize(r[None, :], (W, 1), interpolation=cv2.INTER_NEAREST)[0]
+    r = r * 0.7 + 0.3 * cv2.resize(rng.random(W // 3).astype(np.float32)[None, :], (W, 1), interpolation=cv2.INTER_NEAREST)[0]
+    y0 = (H - 1) * (1 - amt * (0.25 + 0.75 * r))
+    rows = np.minimum(np.arange(H, dtype=np.float32)[:, None], y0[None, :])
+    out = cv2.remap(img, np.broadcast_to(_xx[0][None, :], (H, W)).astype(np.float32), rows.astype(np.float32), cv2.INTER_NEAREST)
+    return out
+def tint(img, a):
+    l = cv2.cvtColor(np.clip(enc(img), 0, 1), cv2.COLOR_BGR2GRAY)[..., None]
+    t = NV * (0.5 + 1.2 * l) + MZ * np.clip((l - 0.62) * 3.0, 0, 1) ** 1.5 * 1.1
+    return img * (1 - a) + t * a
+def psort_tr(cut, seed=0):
+    """239: footage drips into a navy/maize sorted frame, clip B bleeds out of it, strike lands"""
+    L = _L()
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        if k < -6 or k > 5:
+            lin = dec(base(t))
+            if k > 5: lin = strike_on(lin, depth(t), t, cut + 4, seed, L)
+            yield t, enc(lin); continue
+        if k < 0:
+            u = (k + 7) / 6.0
+            lin = tint(psort(dec(base(t)), u ** 1.4, seed), 0.25 + 0.65 * u * u)
+        elif k <= 1:
+            lin = tint(psort(dec(base(cut - 1)), 1.0, seed + k), 1.0) * (1.25 if k == 0 else 0.8)
+        else:
+            u = (k - 1) / 4.0
+            lin = tint(psort(dec(base(t)), 1 - u, seed + 9), 1 - u)
+            lin = strike_on(lin, depth(t), t, cut + 4, seed, L)
+        yield t, enc(lin)
+def window_tr(cut, seed=0):
+    """431: maize rectangle hit on the cut -> clip B inside a window on navy-black -> window opens to full -> strike"""
+    L = _L()
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        if k < -2 or k > 9:
+            lin = dec(base(t))
+            if k > 9: lin = strike_on(lin, depth(t), t, cut + 8, seed, L)
+            yield t, enc(lin); continue
+        if k < 0:
+            yield t, enc(whip(dec(base(t)), (80, 220)[k + 2], (1, 0))); continue
+        if k == 0:
+            img = dec(base(cut - 1)) * 0.35; img[int(H * 0.30):int(H * 0.72), int(W * 0.38):int(W * 0.62)] = MZ
+            yield t, enc(img); continue
+        Bf = dec(base(t))
+        s = 0.44 + 0.02 * (k - 1) if k <= 5 else 0.52 + 0.48 * ss((k - 5) / 4.0)
+        w, h = int(W * s), int(H * s); x0, y0 = (W - w) // 2, int((H - h) * 0.55)
+        img = np.full_like(Bf, BLK) + NV * 0.08
+        img[y0:y0 + h, x0:x0 + w] = cv2.resize(zoom(Bf, 1.0 + 0.04 * (1 - s)), (w, h), interpolation=cv2.INTER_AREA) if s < 0.999 else Bf
+        if k >= 6: img = strike_on(img, depth(t), t, cut + 8, seed, L) if k >= 2 else img
+        yield t, enc(img)
+
 # ---------- plan (tl cut -> transition) ----------
 def ink_tr(cut, n_out=4, n_in=4, seed=1):
     A = under(cut - 1)
@@ -628,9 +802,9 @@ def smear_tr(cut, seed=3, vertical=True):
     yield cut + 2, smear(b3, seed + 6, 0.2, vertical, up=True)
 def glitch_cut(cut, seed=5):
     yield cut, glitch(under(cut), seed, 7, 0.15)
-PLAN = [(led_tr4, 48, dict(seed=11)), (led_tr4, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
-        (dpush_tr, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr, 384, dict(seed=71, dirv=(0.0, -1.0))),
-        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr4, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+PLAN = [(cutout_tr, 48, dict(seed=11)), (psort_tr, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
+        (dpush_tr2, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr2, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr2, 384, dict(seed=71, dirv=(0.0, -1.0))),
+        (dpush_tr2, 408, dict(seed=81, dirv=(-1, 0))), (window_tr, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
 if __name__ == "__main__":
     want = set(int(x) for x in sys.argv[1:])
     done = []

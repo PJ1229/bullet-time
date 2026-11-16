@@ -114,3 +114,12 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - Fix: `assemble.py` skips a V4BAD set; `under(t)` in the v5 baker now always reads the real base (the whip-in frames were sampling the stale layer too).
 - Rule: after ANY re-time of the base, re-validate or delete every older bake layer — never let a lower layer silently fill gaps.
 - Look: transitions now reuse the Block-M ending's LED field (`led_img` + `navy_led`, 6px dots, wave + parallax wiggle) — PJ's favourite — via `ledM()`; ref structure kept (whip → smear frame → hard-cut depth hold → maize strike on the cut → streak out → clean footage).
+
+## v20–v21: dropped the LED-dot transitions for PJ's reel-intro grammar
+- PJ: dot transitions "not the best unless like the reference" → replaced with moves from his IG reel intro (whip, roto cutout on black + sparkles with the next scene torn in, block glitch, mosaic resolve, pixel-sort drip melt, colour-rectangle hit + picture-in-picture window). Translated red → maize/navy; lightning kept on every landing.
+  - 48 `cutout_tr`: tunnel players isolated on black + sparkles, #71 tears in behind them (B's near_mask), maize bar + block glitch on the beat, mosaic 48→24→10→4 → strike.
+  - 239 `psort_tr`: column-stretch drip (below a per-column row y0 the column repeats its y0 pixel; banded y0 = pixel-sort look), navy tint with maize only in highlights → full navy sorted frame on the beat → fan clip bleeds out of the drips, strike.
+  - 431 `window_tr`: whip → maize rectangle on the cut → clip B in a window on navy-black that opens to full → strike. Payoff of the charge chain.
+- Charge-up chain (PJ loved the 0:16 / 384 depth push): `dpush_tr2` at 341→365→384→408 with push strength 0.7/0.85/1.0/1.3 and maize crackle on the near subject growing each push, resolving into the 431 reveal.
+- Subject mattes from depth: normalise depth, threshold, keep tall/sizable components, and never let the mask shrink frame-to-frame (take the fullest of the next 3 frames) — a dropped mask = a black flash frame.
+- Sepia trap: tinting bright ice "navy→maize by luma" turns everything brown. Keep navy dominant, maize only for luma > ~0.62.
