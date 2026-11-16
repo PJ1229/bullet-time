@@ -175,8 +175,14 @@ PJ notes: transitions boring, lightning weird except goal, no drip, pixel heatma
 - Deliverables: hockey_prospect_v16_LOG_master_prores4444xq.mov + _TESTGRADE_preview_small.mp4. Repo: github.com/PJ1229/bullet-time.
 
 ## v22 — FINAL CUT ("Bullet Time") — 2026-11-16
-- Transitions: 48 upward pixel-sort drip (strike 52) · 239 downward drip (strike 243) · 287/455 depth push · 341→365→384→408 charge-up push chain · 431 payoff push + strike · 467 Block M ending.
-- Dropped: LED-dot depth transitions (v17–v20), cutout + window/square (v21).
-- Fixed timing: stale bake_v4 frames excluded (V4BAD 216–238, 312–334, 380, 455–466); baker reads base only.
-- Resolve prospect_v5_cut: V5 TRANS_v5 re-imported (bin 07_trans_v22); A14 heat sweeps 30–49 / 221–240, crackle 52–64 / 243–255 / 431–443, chargeup 421–431; A5 zaps at 52 / 243 / 408.
-- Deliverables: hockey_prospect_v22_LOG_master_prores4444xq.mov · v22 test-grade preview · stills_v22_LOG/ (17 × 16-bit S-Log3 TIFF).
+- Transitions (bake_v5_transitions.py PLAN): 48 `psort_tr(up=True)` upward pixel-sort drip (tunnel → #71, strike lands 52) · 239 `psort_tr` downward drip (#44 cele → fan, strike 243) · 287/455 `dpush_tr` · 341→365→384→408 `dpush_tr2` charge-up chain (push 0.7/0.85/1.0/1.3 + growing maize crackle) · 431 `payoff_tr` (1.6× push + full strike) · 467 `end_tr` Block M.
+- Dropped: LED-dot depth transitions (v17–v20), cutout and window/square transitions (v21).
+- Fixed timing: stale bake_v4 frames (pre song-extension) excluded in assemble.py (V4BAD 216–238, 312–334, 380, 455–466); v5 baker reads base only.
+- Resolve prospect_v5_cut: V5 "TRANS_v5 (log)" re-imported from bake_v5_log16 (bin 07_trans_v22). A14: heat_sweep 30–49 & 221–240 (drip build), crackle 52–64, 243–255, 431–443, chargeup 421–431; A5 zaps moved to 52 / 243, added 408.
+- Deliverables: 06_deliverables/hockey_prospect_v22_LOG_master_prores4444xq.mov (S-Log3/S-Gamut3.Cine, 527f, 24-bit audio) · hockey_prospect_v22_TESTGRADE_preview_small.mp4 · stills_v22_LOG/ (17 × 16-bit S-Log3 TIFF + testgrade refs).
+
+## v23 — final tweaks (2026-11-16, last revision of the day)
+- 0:16–0:17 (389–404): `charge_tr` — maize lightning crawls the Horcoff 44 group's silhouette and grows into the 408 push (maize-jersey colour key where depth maps are missing; depth 388–402 never generated because Blender couldn't read ~/Documents).
+- 408 push: vertical (0,1), landing side softened (gb 0.6), arcs on the player silhouette.
+- Ending Block M: re-animated in Blender (m-logo/blockm_led_v02_swoosh.blend → blockm_v2_exr): swooshes in from the right with ~125° spin + motion blur, settles facing camera on the lock frame; G channel = facing-light shade so faces/sides read 3D in the LED field. Whoosh on A8 480–492.
+- Deliverables: hockey_prospect_v23_LOG_master_prores4444xq.mov (FINAL) + v23 test-grade preview.

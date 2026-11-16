@@ -381,14 +381,16 @@ def _L():
     import importlib; cwd = os.getcwd(); sys.path.insert(0, G + "/puck-lightning/tools"); L = importlib.import_module("lightning_v5"); os.chdir(cwd)
     L.HOTL = np.array([0.78, 0.97, 1.0], np.float32); L.PINKL = np.array([0.08, 0.78, 1.0], np.float32); L.REDL = np.array([0.0, 0.45, 1.0], np.float32)   # MAIZE lightning in transitions
     return L
-BM = G + "/m-logo/blockm_depth_exr/bm_%04d.exr"
+BM = G + "/m-logo/blockm_v2_exr/bm_%04d.exr"   # v23: side swoosh + rotation, G channel = facing light
 def m_depth(t, drop=479):
     """Block M depth (near=1) + alpha for tl t (render f1 = drop)"""
     f = min(t - drop + 1, 13)                                   # freezes on the strike (f13 = lock)
     if f < 1 or not os.path.exists(BM % f): return None, None
     sys.path.insert(0, G + "/tools"); from read_rgba import read_rgba
     rgb, A = read_rgba(BM % f); z = rgb[..., 0]
-    return np.clip(0.55 + (z - 0.33) * 1.1, 0, 1).astype(np.float32) * (A > 0.02), A.astype(np.float32)
+    sh = np.clip((rgb[..., 1] - 0.1) / 0.8, 0, 1)                 # lit faces bright, sides/returns darker -> reads 3D
+    v = np.clip(0.5 * np.clip(0.55 + (z - 0.33) * 1.1, 0, 1) + 0.6 * sh, 0, 1)
+    return v.astype(np.float32) * (A > 0.02), A.astype(np.float32)
 def end_tr(drop=479, lock=491, off=515, last=526, pal="navy_led", seed=5):
     L = _L()
     for t in range(467, drop):                                   # slow depth push-in on the fans (near grows faster)
@@ -635,16 +637,21 @@ def led_tr5(cut, seed=0, hold=10, bolt=True):
             lin = whip(dec(base(t)), {hold + 2: 160, hold + 3: 50}.get(k, 0), (-1, 0))
         yield t, enc(lin)
 CHARGE = {341: 0.7, 365: 0.85, 384: 1.0, 408: 1.3}             # escalating pushes into the 431 LED reveal
-def dpush_tr2(cut, seed=3, dirv=(1.0, 0.0)):
+def dpush_tr2(cut, seed=3, dirv=(1.0, 0.0), gb=1.0, subj_arcs=False):
     g = CHARGE.get(cut, 1.0); stage = sorted(CHARGE).index(cut) if cut in CHARGE else -1
     L = _L(); dv = np.array(dirv, np.float32)
     seq = [(cut - 3, 0.025, False), (cut - 2, 0.08, False), (cut - 1, 0.2, False), (cut, -0.18, True), (cut + 1, -0.07, True), (cut + 2, -0.02, True)]
     for t, u, post in seq:
         d = depth(t); src = dec(base(t))
-        lin = dpush(src, d, u * g, dv * 0.9, 0.45, 28)
+        lin = dpush(src, d, u * g * (gb if post else 1.0), dv * 0.9, 0.45, 28)
         if stage >= 0:                                         # crackle grows each push: the edit is charging
             k = t - cut; e = (0.35, 0.55, 0.75, 1.0)[stage] * (1.0 if k in (-1, 0) else 0.5)
             nm = near_mask(d); rng = np.random.default_rng(seed * 11 + t); core = np.zeros((H, W), np.float32)
+            if subj_arcs:                                       # arcs on the real player silhouette, not the frame-bottom near band
+                sm = (subj(d, 0.45) > 0.5).astype(np.uint8)
+                sm[int(H * 0.93):] = 0
+                if sm.sum() > 20000: nm = sm
+                e = e * 1.3
             edge_arcs(L, core, nm, rng, int(3 + 7 * e), 0.3 + 0.6 * e, 1.4 + 1.2 * e, d=d)
             if core.max() > 0:
                 alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
@@ -792,6 +799,35 @@ def payoff_tr(cut, seed=0, dirv=(1.0, -0.2), g=1.6):
         lin = strike_on(lin, d, t, cut, seed, L)
         yield t, enc(lin)
 
+
+def view709(lin):
+    sys.path.insert(0, G + '/puck-lightning/tools'); from view709 import view; return view(enc(lin))
+def charge_tr(start, end=404, seed=5, cut=408):
+    """v23: goal-grammar charge on the person over a held shot (0:16-0:17, Horcoff 44): arcs crawl his silhouette and grow toward the next push"""
+    L = _L()
+    for t in range(start, end + 1):
+        u = (t - start + 1) / (end - start + 2)                    # 0 -> 1 across the hold
+        d = depth(t); lin = dec(base(t))
+        if d is not None:
+            sm = (subj(d, 0.45) > 0.5).astype(np.uint8); sm[int(H * 0.93):] = 0
+            if sm.sum() < 20000: sm = near_mask(d)
+        else:                                                   # no depth map: key the maize jerseys (+ helmets/navy trim)
+            v = (view709(lin) * 255).clip(0, 255).astype(np.uint8); hsv = cv2.cvtColor(v, cv2.COLOR_BGR2HSV)
+            mz = cv2.inRange(hsv, (14, 90, 90), (38, 255, 255))
+            mz = cv2.morphologyEx(mz, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
+            n, lab, st, _ = cv2.connectedComponentsWithStats(mz); sm = np.zeros((H, W), np.uint8)
+            for i in range(1, n):
+                if st[i][4] > 25000: sm[lab == i] = 1
+            sm[int(H * 0.93):] = 0
+        rng = np.random.default_rng(seed * 31 + t // 2); core = np.zeros((H, W), np.float32)
+        e = 0.25 + 0.95 * u ** 1.3
+        edge_arcs(L, core, sm, rng, int(3 + 12 * e), 0.35 + 0.65 * e, 1.5 + 1.4 * e, d=d)
+        if core.max() > 0:
+            core *= float(np.clip(np.random.default_rng(900 + t).normal(1, 0.25), 0.6, 1.35))
+            alb = L.lum((enc(lin) * 255).clip(0, 255).astype(np.uint8))
+            lin = lin + L.finish(core, alb, None, 0.25 + 0.5 * e, 0.0, refl_gain=0.0, white_flash=0.0, bg_lin=lin)
+        yield t, enc(lin)
+
 # ---------- plan (tl cut -> transition) ----------
 def ink_tr(cut, n_out=4, n_in=4, seed=1):
     A = under(cut - 1)
@@ -816,7 +852,7 @@ def glitch_cut(cut, seed=5):
     yield cut, glitch(under(cut), seed, 7, 0.15)
 PLAN = [(psort_tr, 48, dict(seed=17, up=True)), (psort_tr, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
         (dpush_tr2, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr2, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr2, 384, dict(seed=71, dirv=(0.0, -1.0))),
-        (dpush_tr2, 408, dict(seed=81, dirv=(-1, 0))), (payoff_tr, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+        (charge_tr, 389, dict(end=404, seed=5)), (dpush_tr2, 408, dict(seed=81, dirv=(0.0, 1.0), gb=0.6, subj_arcs=True)), (payoff_tr, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
 if __name__ == "__main__":
     want = set(int(x) for x in sys.argv[1:])
     done = []

@@ -72,6 +72,12 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - Fix: `assemble.py` skips a `V4BAD` set; the baker reads base only.
 - **Rule: after any re-time of the base, re-validate or delete every older bake layer.** Never let a lower layer silently fill gaps.
 
+## 4c. Last-day tweaks (v23)
+- **Charge on a held shot** (`charge_tr`, 0:16–0:17 on Horcoff 44): the goal grammar works anywhere — arcs crawl the person's silhouette and grow (intensity ∝ u^1.3) into the next cut. If a depth map is missing, a **maize-jersey HSV key** (H 14–38, S/V > 90 on the test-grade view) is a solid subject matte for Michigan footage.
+- **3D logo has to show its sides to read as 3D.** A depth-only emission render looks flat in the LED field. Fix: animate a side swoosh with a big spin (~125° around vertical, ease-out, motion blur) that settles on the lock frame, and render a second channel = facing-light shade (Geometry Normal · light dir → G channel) so faces vs. returns separate. `m-logo/blockm_led_v02_swoosh.blend`.
+- **Blender couldn't read `~/Documents`** this session (every read timed out — likely a pending macOS privacy prompt or iCloud eviction). Depth Anything lives there, so new depth maps couldn't be made. Fix next time: approve Blender's Documents access (System Settings → Privacy → Files & Folders) or move `claude-tools` off `~/Documents`.
+- **ProRes encode on the device shell:** with Resolve/Blender busy, 8×66-frame parallel chunks no longer finish in one ~3-min call. Use 44-frame chunks, ≤5 per call, check every chunk's packet count before concat.
+
 ## 5. Resolve API gotchas
 - **Image sequences:** place with `startFrame=a, endFrame=b+1` (sequence numbers), not 0..N. It "succeeds" with a negative offset and shows nothing. Verify by diffing exported frames.
 - **New clips without touching audio:** `AppendToTimeline` with `mediaType: 1` on a spare track.
@@ -91,7 +97,7 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
   - `graphics/inspo-transitions/tools/bake_v5_transitions.py` — all depth transitions and the ending
   - `graphics/master_v4/` — log master assembly
   - `graphics/tools/` — EXR→S-Log3, viewers
-- **Deliverables (TOSHIBA `06_deliverables/`):** `hockey_prospect_v22_LOG_master_prores4444xq.mov` (final, S-Log3), `hockey_prospect_v22_TESTGRADE_preview_small.mp4`, `stills_v22_LOG/` (17 × 16-bit S-Log3 TIFF for posting).
+- **Deliverables (TOSHIBA `06_deliverables/`):** `hockey_prospect_v23_LOG_master_prores4444xq.mov` (FINAL, S-Log3), `hockey_prospect_v23_TESTGRADE_preview_small.mp4`, `stills_v22_LOG/` (17 × 16-bit S-Log3 TIFF for posting).
 - **Notes:**
   - `notes/STORYBOARD_v3_PROSPECT.md` — the running changelog of every version
   - `notes/TRANSITIONS_v*.md`
