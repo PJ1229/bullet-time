@@ -449,6 +449,138 @@ def end_tr(drop=479, lock=491, off=515, last=526, pal="navy_led", seed=5):
             lin = lin * (1 - m[..., None]) + (-0.003) * m[..., None]
         yield t, enc(lin)
 
+
+# ---------- v17: fine LED depth (4px), people pop, smooth melts + depth morph across the cut ----------
+CELL2 = 4
+_cx2 = ((_xx % CELL2) - (CELL2 - 1) / 2) / CELL2; _cy2 = ((_yy % CELL2) - (CELL2 - 1) / 2) / CELL2
+DOT2 = np.clip((0.46 - np.sqrt(_cx2 ** 2 + _cy2 ** 2)) / 0.10, 0, 1).astype(np.float32)
+PAL["navy2"] = [(0.0, (0.006, 0.0015, 0.0)), (0.25, (0.045, 0.012, 0.002)), (0.45, (0.2, 0.06, 0.01)), (0.62, (0.55, 0.2, 0.05)),
+                (0.78, (0.95, 0.45, 0.16)), (0.9, (1.8, 1.1, 0.6)), (1.0, (2.8, 2.3, 1.9))]
+def ndepth(d):
+    d = np.minimum(d, cv2.dilate(cv2.erode(d.astype(np.float32), np.ones((1, 181), np.float32), borderType=cv2.BORDER_CONSTANT, borderValue=0), np.ones((1, 181), np.float32)) + 0.10)   # kill thin edge slivers (tunnel wall)
+    lo, hi = np.percentile(d, 1), np.percentile(d, 99.7)
+    return np.clip((d - lo) / max(hi - lo, 1e-3), 0, 1).astype(np.float32)
+def led2(t, d, src, pal="navy2"):
+    """fine LED depth: gentle wave + parallax wiggle, rim on silhouettes, a touch of footage luma for detail"""
+    d = ndepth(d)
+    ph = 2 * np.pi * t / 8.0
+    dx = 5.0 * np.sin(2 * np.pi * _yy / 300.0 + ph) + 9.0 * np.sin(ph * 0.9) * (d - 0.4)
+    dy = 3.0 * np.sin(2 * np.pi * _xx / 420.0 - ph * 1.2) + 3.0 * np.cos(ph * 0.9) * (d - 0.4)
+    mx, my = (_xx - dx).astype(np.float32), (_yy - dy).astype(np.float32)
+    dw = cv2.remap(d, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    lum = cv2.cvtColor(np.clip(src, 0, 1).astype(np.float32), cv2.COLOR_BGR2GRAY)
+    lum = cv2.remap(lum, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    lum = (lum - lum.mean()) / (lum.std() + 1e-3)
+    g = cv2.GaussianBlur(np.hypot(cv2.Sobel(dw, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(dw, cv2.CV_32F, 0, 1, ksize=3)), (0, 0), 1.5)
+    rim = np.clip(g / (np.quantile(g, 0.985) + 1e-4), 0, 1) * np.clip(dw * 1.5 - 0.2, 0, 1)
+    loc = dw - cv2.GaussianBlur(dw, (0, 0), 45)                            # how much each object stands out from its surroundings
+    loc = np.clip(loc / (np.quantile(np.abs(loc), 0.995) + 1e-4), -1, 1)
+    v = np.clip(0.18 + 0.42 * dw + 0.55 * np.maximum(loc, 0) - 0.15 * np.maximum(-loc, 0) + 0.05 * lum + 0.12 * rim, 0, 1)
+    sm = cv2.resize(v, (W // CELL2, H // CELL2), interpolation=cv2.INTER_AREA)
+    q = cv2.resize(sm, (W, H), interpolation=cv2.INTER_NEAREST)
+    hm = heat(q, pal, 1.0)
+    return hm * DOT2[..., None] + cv2.GaussianBlur(hm, (0, 0), 2.0) * 0.22
+def melt(foot, led, d, u, far_first=True):
+    """smooth depth-ordered dissolve: u 0 -> footage, 1 -> LED; soft band, no blocks"""
+    d = ndepth(cv2.GaussianBlur(d, (0, 0), 4)); key = (1 - d) if far_first else d
+    key = cv2.GaussianBlur(key, (0, 0), 25)
+    a = np.clip((u - 0.3 * (1 - key)) / 0.7, 0, 1); a = a * a * (3 - 2 * a)
+    return foot * (1 - a[..., None]) + led * a[..., None]
+def led_tr2(cut, seed=0, pal="navy2", n_in=6, hold_a=6, morph=4, hold_b=8, n_out=7, bolt=True):
+    L = _L() if bolt else None
+    t0 = cut - hold_a - n_in - morph // 2
+    for t in range(t0, cut + morph // 2 + hold_b + n_out):
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        src_lin = dec(under(t) if t < cut else base(t))
+        if cut - morph // 2 <= t < cut + morph // 2:            # morph: A's LED depth -> B's LED depth (cross-dissolve of fields)
+            ta, tb = cut - morph // 2 - 1, cut + morph // 2
+            u = (t - (cut - morph // 2) + 1) / (morph + 1); u = u * u * (3 - 2 * u)
+            la = led2(t, depth(min(t, cut - 1)), dec(under(min(t, cut - 1))), pal); lb = led2(t, depth(max(t, cut)), dec(base(max(t, cut))), pal)
+            lin = la * (1 - u) + lb * u
+        else:
+            led = led2(t, d, src_lin, pal)
+            if t < cut:
+                u = (t - t0 + 1) / n_in
+                lin = led if u >= 1 else melt(src_lin, led, d, u, True)
+            else:
+                k = t - (cut + morph // 2 + hold_b)
+                u = 1 - (k + 1) / n_out if k >= 0 else 1.0
+                lin = led if u >= 1 else melt(src_lin, led, d, u, True)
+        if bolt: lin = strike_on(lin, d, t, cut, seed, L)
+        yield t, enc(lin)
+
+
+# ---------- v18: reference structure — hard cut in, clean high-contrast depth hold, streak out ----------
+CELL3 = 5
+_cy3, _cx3 = np.mgrid[0:H, 0:W]; _cy3 = (_cy3 % CELL3 + 0.5) / CELL3 - 0.5; _cx3 = (_cx3 % CELL3 + 0.5) / CELL3 - 0.5
+DOT3 = np.clip((0.40 - np.sqrt(_cx3 ** 2 + _cy3 ** 2)) / 0.07, 0, 1).astype(np.float32)   # crisp dots, dark gaps
+PAL["navy3"] = [(0.0, (0.004, 0.001, 0.0)), (0.22, (0.03, 0.008, 0.001)), (0.4, (0.16, 0.04, 0.006)), (0.58, (0.5, 0.15, 0.025)),
+                 (0.74, (1.0, 0.38, 0.08)), (0.87, (1.6, 0.85, 0.35)), (1.0, (2.6, 2.1, 1.6))]
+def led3(t, d, pal="navy3"):
+    """pure depth (no footage texture): far -> black, people glow, nearest clips toward white; slow subtle wobble"""
+    d = ndepth(d)
+    ph = 2 * np.pi * t / 16.0
+    dx = 2.5 * np.sin(2 * np.pi * _yy / 360.0 + ph) + 4.0 * np.sin(ph * 0.7) * (d - 0.4)
+    dy = 1.5 * np.sin(2 * np.pi * _xx / 500.0 - ph) + 2.0 * np.cos(ph * 0.7) * (d - 0.4)
+    dw = cv2.remap(d, (_xx - dx).astype(np.float32), (_yy - dy).astype(np.float32), cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    loc = dw - cv2.GaussianBlur(dw, (0, 0), 60)
+    loc = np.clip(loc / (np.quantile(np.abs(loc), 0.995) + 1e-4), -1, 1)
+    v = 0.08 + 0.58 * ss(dw / 0.9) ** 0.7 + 0.30 * np.maximum(loc, 0) - 0.08 * np.maximum(-loc, 0)
+    v = np.clip(v, 0, 0.86)
+    sm = cv2.resize(v, (W // CELL3, H // CELL3), interpolation=cv2.INTER_AREA)
+    q = cv2.resize(sm, (W, H), interpolation=cv2.INTER_NEAREST)
+    hm = heat(q, pal, 1.0)
+    return hm * DOT3[..., None] + cv2.GaussianBlur(hm, (0, 0), 3.0) * 0.12
+def whip(img, amt, dirv=(1.0, 0.0), n=14):
+    """directional motion smear of length amt px"""
+    if amt < 1: return img
+    acc = np.zeros_like(img)
+    for i in range(n):
+        o = (i / (n - 1) - 0.5) * amt
+        M = np.float32([[1, 0, o * dirv[0]], [0, 1, o * dirv[1]]])
+        acc += cv2.warpAffine(img, M, (W, H), borderMode=cv2.BORDER_REFLECT)
+    return acc / n
+def glitch3(foot, led, seed):
+    """one transitional frame like the ref: blue-tinted smeared footage + coarse depth blocks"""
+    rng = np.random.default_rng(seed)
+    a = whip(foot, 260)
+    lum = cv2.cvtColor(np.clip(a, 0, 1), cv2.COLOR_BGR2GRAY)[..., None]
+    tint = lum * np.array([1.0, 0.45, 0.12], np.float32) * 1.3
+    blk = pix(led, 24)
+    out = tint * 0.30 + blk * 0.55
+    for _ in range(9):                                  # a few horizontal slabs offset
+        y = int(rng.integers(0, H - 60)); h = int(rng.integers(12, 70)); o = int(rng.integers(-180, 180))
+        out[y:y + h] = np.roll(out[y:y + h], o, axis=1)
+    return out
+def streak(led, amt, seed):
+    """exit: rows smear sideways (ref 176) + fade"""
+    rng = np.random.default_rng(seed)
+    out = whip(led, amt, (-1.0, 0.0), 18)
+    rows = cv2.resize(rng.random((H // 6, 1)).astype(np.float32), (1, H), interpolation=cv2.INTER_NEAREST)
+    sh = whip(led, amt * 2.2, (-1.0, 0.0), 18)
+    m = (rows > 0.55).astype(np.float32)[:, :, None] * np.ones((1, W, 1), np.float32)
+    return out * (1 - m) + sh * m
+def led_tr3(cut, seed=0, pal="navy3", bolt=True):
+    L = _L() if bolt else None
+    for t in range(cut - 14, cut + 17):
+        k = t - cut
+        d = depth(t)
+        if d is None: raise SystemExit("missing depth %d" % t)
+        if k <= -13:                                          # whip build on clip A
+            foot = dec(under(t)); lin = whip(foot, (90, 220)[k + 14], (1, 0)); yield t, enc(lin); continue
+        if k == -12:
+            lin = glitch3(dec(under(t)), led3(t, d, pal), seed); yield t, enc(lin); continue
+        if k <= 11:                                           # depth hold A (hard), hard cut on the beat to depth B
+            lin = led3(t, d, pal)
+            if k <= -10: lin = lin * (1.0 + 0.6 * (-9 - k))          # 2f exposure kick on entry
+        elif k <= 13:                                          # streak out
+            lin = streak(led3(t, d, pal), (140, 420)[k - 12], seed + k) * (0.85, 0.5)[k - 12]
+        else:                                                  # clean footage B, decelerating whip
+            foot = dec(base(t)); lin = whip(foot, (160, 50, 0)[k - 14], (-1, 0)); yield t, enc(lin); continue
+        if bolt and k >= -6: lin = strike_on(lin, d, t, cut, seed, L)
+        yield t, enc(lin)
+
 # ---------- plan (tl cut -> transition) ----------
 def ink_tr(cut, n_out=4, n_in=4, seed=1):
     A = under(cut - 1)
@@ -471,9 +603,9 @@ def smear_tr(cut, seed=3, vertical=True):
     yield cut + 2, smear(b3, seed + 6, 0.2, vertical, up=True)
 def glitch_cut(cut, seed=5):
     yield cut, glitch(under(cut), seed, 7, 0.15)
-PLAN = [(led_tr, 48, dict(pal="navy_led", seed=11)), (led_tr, 239, dict(pal="navy_led", seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
+PLAN = [(led_tr3, 48, dict(seed=11)), (led_tr3, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
         (dpush_tr, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr, 384, dict(seed=71, dirv=(0.0, -1.0))),
-        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr, 431, dict(pal="navy_led", seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+        (dpush_tr, 408, dict(seed=81, dirv=(-1, 0))), (led_tr3, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
 if __name__ == "__main__":
     want = set(int(x) for x in sys.argv[1:])
     done = []

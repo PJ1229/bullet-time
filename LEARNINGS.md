@@ -100,3 +100,10 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - **Notes:**
   - `notes/STORYBOARD_v3_PROSPECT.md` — the running changelog of every version
   - `notes/TRANSITIONS_v*.md`
+
+## v17 → v18: match the reference's *structure*, not just its texture
+- Comparing frame by frame with the Huntington ref: it **hard-cuts** into the depth look on the beat (or whip smear → 1 blue glitch frame → depth). Slow depth-ordered melts made muddy half-states — dropped.
+- Depth sections are **pure depth** (no footage luma bleeding through), high-contrast: far crushes toward black, people glow saturated, only the nearest parts approach white. Cap the value (~0.86) so near subjects stay blue, not pale gray.
+- Dot grid must have **dark gaps** to read (5px cell, dot radius 0.40, sharp edge) — 4px soft dots vanished.
+- Hold one depth scene per clip; on the cut, hard-switch depth A → depth B under the maize strike. Exit with a horizontal row streak (ref f176), then clean footage with a decelerating whip.
+- Always build a REF-vs-ours strip at matching phases (in / hold / out) before iterating.
