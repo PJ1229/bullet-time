@@ -123,3 +123,7 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - Charge-up chain (PJ loved the 0:16 / 384 depth push): `dpush_tr2` at 341→365→384→408 with push strength 0.7/0.85/1.0/1.3 and maize crackle on the near subject growing each push, resolving into the 431 reveal.
 - Subject mattes from depth: normalise depth, threshold, keep tall/sizable components, and never let the mask shrink frame-to-frame (take the fullest of the next 3 frames) — a dropped mask = a black flash frame.
 - Sepia trap: tinting bright ice "navy→maize by luma" turns everything brown. Keep navy dominant, maize only for luma > ~0.62.
+
+## v22
+- PJ: the pixel-sort drip (239) is the keeper — "heavy". 48 is now a second pixel-sort, mirrored to drip UP (`psort_tr(..., up=True)`) so the two don't repeat.
+- Square/window transition (431) faded out. The charge chain (341→365→384→408) now pays off at 431 with `payoff_tr`: the strongest depth push (1.6×) + a full maize strike, no box.

@@ -739,9 +739,10 @@ def tint(img, a):
     l = cv2.cvtColor(np.clip(enc(img), 0, 1), cv2.COLOR_BGR2GRAY)[..., None]
     t = NV * (0.5 + 1.2 * l) + MZ * np.clip((l - 0.62) * 3.0, 0, 1) ** 1.5 * 1.1
     return img * (1 - a) + t * a
-def psort_tr(cut, seed=0):
+def psort_up(img, amt, seed): return psort(img[::-1].copy(), amt, seed)[::-1].copy()
+def psort_tr(cut, seed=0, up=False):
     """239: footage drips into a navy/maize sorted frame, clip B bleeds out of it, strike lands"""
-    L = _L()
+    L = _L(); PS = psort_up if up else psort
     for t in range(cut - 14, cut + 17):
         k = t - cut
         if k < -6 or k > 5:
@@ -750,12 +751,12 @@ def psort_tr(cut, seed=0):
             yield t, enc(lin); continue
         if k < 0:
             u = (k + 7) / 6.0
-            lin = tint(psort(dec(base(t)), u ** 1.4, seed), 0.25 + 0.65 * u * u)
+            lin = tint(PS(dec(base(t)), u ** 1.4, seed), 0.25 + 0.65 * u * u)
         elif k <= 1:
-            lin = tint(psort(dec(base(cut - 1)), 1.0, seed + k), 1.0) * (1.25 if k == 0 else 0.8)
+            lin = tint(PS(dec(base(cut - 1)), 1.0, seed + k), 1.0) * (1.25 if k == 0 else 0.8)
         else:
             u = (k - 1) / 4.0
-            lin = tint(psort(dec(base(t)), 1 - u, seed + 9), 1 - u)
+            lin = tint(PS(dec(base(t)), 1 - u, seed + 9), 1 - u)
             lin = strike_on(lin, depth(t), t, cut + 4, seed, L)
         yield t, enc(lin)
 def window_tr(cut, seed=0):
@@ -780,6 +781,17 @@ def window_tr(cut, seed=0):
         if k >= 6: img = strike_on(img, depth(t), t, cut + 8, seed, L) if k >= 2 else img
         yield t, enc(img)
 
+
+def payoff_tr(cut, seed=0, dirv=(1.0, -0.2), g=1.6):
+    """v22: end of the charge chain = strongest depth push + full strike (no box)"""
+    L = _L(); dv = np.array(dirv, np.float32)
+    P = {cut - 3: 0.025, cut - 2: 0.08, cut - 1: 0.2, cut: -0.18, cut + 1: -0.07, cut + 2: -0.02}
+    for t in range(cut - 14, cut + 17):
+        d = depth(t); lin = dec(base(t))
+        if t in P: lin = dpush(lin, d, P[t] * g, dv * 0.9, 0.45, 28)
+        lin = strike_on(lin, d, t, cut, seed, L)
+        yield t, enc(lin)
+
 # ---------- plan (tl cut -> transition) ----------
 def ink_tr(cut, n_out=4, n_in=4, seed=1):
     A = under(cut - 1)
@@ -802,9 +814,9 @@ def smear_tr(cut, seed=3, vertical=True):
     yield cut + 2, smear(b3, seed + 6, 0.2, vertical, up=True)
 def glitch_cut(cut, seed=5):
     yield cut, glitch(under(cut), seed, 7, 0.15)
-PLAN = [(cutout_tr, 48, dict(seed=11)), (psort_tr, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
+PLAN = [(psort_tr, 48, dict(seed=17, up=True)), (psort_tr, 239, dict(seed=21)), (dpush_tr, 287, dict(seed=31, dirv=(1, 0))),
         (dpush_tr2, 341, dict(seed=41, dirv=(-1, 0.15))), (dpush_tr2, 365, dict(seed=61, dirv=(1, -0.1))), (dpush_tr2, 384, dict(seed=71, dirv=(0.0, -1.0))),
-        (dpush_tr2, 408, dict(seed=81, dirv=(-1, 0))), (window_tr, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
+        (dpush_tr2, 408, dict(seed=81, dirv=(-1, 0))), (payoff_tr, 431, dict(seed=91)), (dpush_tr, 455, dict(seed=101, dirv=(0.6, 0.4))), (lambda c, **k: end_tr(), 467, {})]
 if __name__ == "__main__":
     want = set(int(x) for x in sys.argv[1:])
     done = []
