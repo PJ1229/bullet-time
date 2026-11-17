@@ -18,7 +18,7 @@ def correct(lin):
     med = np.exp(np.median(np.log(np.clip(Y, 1e-4, None))))
     lin = lin * np.clip(0.16 / max(med, 1e-4), 0.55, 2.2)
     # "hdr" highlight: tame very hot ice/lights before the curve
-    Y = luma(lin); k = np.where(Y > 1.0, (1.0 + np.log1p(Y - 1.0) * 0.6) / np.maximum(Y, 1e-6), 1.0)
+    Y = luma(lin); k = np.where(Y > 1.0, (1.0 + np.log1p(np.maximum(Y - 1.0, 0)) * 0.6) / np.maximum(Y, 1e-6), 1.0)
     lin = lin * k[..., None]
     # wb: neutralise bright low-chroma pixels (ice / boards) 75%, keep a hair of warmth
     Y = luma(lin); ch = (lin.max(-1) - lin.min(-1)) / np.maximum(Y, 1e-4)
@@ -48,33 +48,37 @@ def ref_tint(L, k=0.72):
     rg = np.interp(L, c, [b[1] for b in REF_BANDS]) ** k; bg = np.interp(L, c, [b[2] for b in REF_BANDS]) ** k
     m = np.stack([rg, np.ones_like(rg), bg], -1)
     return m / (m @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
+LOOK = dict(k=0.72, con=1.05, sat=0.78, lift=0.0, sh=(1, 1, 1), hi=(1, 1, 1), roll=0.84, hal=1.0)
 def grade(d):
     hsv0 = rgb2hsv_f(d); H0, S0 = hsv0[..., 0], hsv0[..., 1]
     w_navy0 = np.exp(-((H0 - 222) / 22) ** 2) * ss(S0 / 0.35)
     L = luma(d)
-    tint = ref_tint(L)
+    tint = ref_tint(L, LOOK['k'])
+    shw = (1 - ss(L / 0.4))[..., None]; hiw = ss((L - 0.5) / 0.45)[..., None]
+    tint = tint * (1 + shw * (np.array(LOOK['sh'], np.float32) - 1)) * (1 + hiw * (np.array(LOOK['hi'], np.float32) - 1))
     keep = (0.55 * w_navy0)[..., None]                          # navy jerseys keep their blue
     d = d * (tint * (1 - keep) + keep)
     # midtones: soft contrast, highlights held under ~0.88 like the ref
-    d = np.clip(0.40 + (d - 0.40) * 1.05, 0, 1)
+    d = np.clip(0.40 + (d - 0.40) * LOOK['con'], 0, 1)
+    d = LOOK['lift'] + d * (1 - LOOK['lift'])
     hsv = rgb2hsv_f(d); H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     w_maize = np.exp(-((H - 47) / 12) ** 2); w_navy = np.exp(-((H - 222) / 20) ** 2)
     w_red = np.exp(-((np.minimum(np.abs(H - 0), np.abs(H - 360)) / 18) ** 2)); w_grn = np.exp(-((H - 110) / 35) ** 2)
     w_teal = np.exp(-((H - 180) / 18) ** 2)
-    sat = 0.78 + 0.32 * w_maize + 0.22 * w_navy + 0.05 * w_red - 0.25 * w_grn + 0.05 * w_teal
+    sat = LOOK['sat'] + 0.32 * w_maize + 0.22 * w_navy + 0.05 * w_red - 0.25 * w_grn + 0.05 * w_teal
     sat = sat * (0.6 + 0.4 * ss(V / 0.22)) * (1 - 0.35 * (1 - w_maize) * ss((V - 0.8) / 0.2))
     H = np.where(w_maize > 0.3, H - 3.0 * w_maize, H)          # maize -> gold
     H = np.where(w_grn > 0.3, H - 18 * w_grn, H)                # greens -> olive (ref foliage)
     S = np.clip(S * sat, 0, 1)
     d = hsv2rgb_f(np.dstack([H % 360, S, V]))
-    d = np.where(d > 0.84, 0.84 + (1 - np.exp(-(d - 0.84) / 0.12)) * 0.12, d)   # creamy roll-off
+    r = LOOK['roll']; d = np.where(d > r, r + (1 - np.exp(-(d - r) / (1 - r))) * (1 - r), d)   # creamy roll-off
     return np.clip(d, 0, 1)
 def finish(d, seed=0):
     h, w = d.shape[:2]
     # halation: warm red-orange bloom off the brightest bits (lightning, lights, ice glints)
     hl = np.clip((luma(d) - 0.76) / 0.2, 0, 1)
     hal = cv2.GaussianBlur(hl, (0, 0), w / 320) * 0.6 + cv2.GaussianBlur(hl, (0, 0), w / 90) * 0.4
-    d = d + hal[..., None] * np.array([0.12, 0.05, 0.005], np.float32)
+    d = d + hal[..., None] * np.array([0.12, 0.05, 0.005], np.float32) * LOOK['hal']
     # grain: luma-weighted, fine
     rng = np.random.default_rng(seed)
     g = cv2.GaussianBlur(rng.standard_normal((h, w)).astype(np.float32), (0, 0), 0.7)
@@ -105,10 +109,18 @@ def write_lut(path, n=33):
     with open(path, 'w') as f:
         f.write('TITLE "Bullet Time look (S-Log3 SGamut3.Cine -> Rec709)"\nLUT_3D_SIZE %d\n' % n)
         for v in out: f.write('%.6f %.6f %.6f\n' % tuple(v))
+LOOKS = {
+ "A_golden":  dict(k=0.72, con=1.05, sat=0.78, lift=0.0,  sh=(1, 1, 1),          hi=(1, 1, 1),          roll=0.84, hal=1.0),
+ "B_sunset":  dict(k=1.0,  con=1.14, sat=0.85, lift=0.0,  sh=(1.04, 0.97, 0.95), hi=(1.08, 0.98, 0.84), roll=0.82, hal=1.6),
+ "C_haze":    dict(k=0.85, con=0.88, sat=0.62, lift=0.06, sh=(1.02, 1.0, 1.0),   hi=(1.03, 1.0, 0.95),  roll=0.80, hal=1.2),
+ "D_tealgold":dict(k=0.6,  con=1.12, sat=0.86, lift=0.0,  sh=(0.88, 1.0, 1.10),  hi=(1.06, 1.0, 0.86),  roll=0.85, hal=1.0),
+ "E_clean":   dict(k=0.3,  con=1.08, sat=0.88, lift=0.0,  sh=(1, 1, 1),          hi=(1.02, 1.0, 0.97),  roll=0.88, hal=0.6),
+}
 if __name__ == "__main__":
     ind, outd = sys.argv[1], sys.argv[2]; os.makedirs(outd, exist_ok=True)
+    if '--look' in sys.argv: LOOK.update(LOOKS[sys.argv[sys.argv.index('--look') + 1]])
     if '--lut' in sys.argv: write_lut(sys.argv[sys.argv.index('--lut') + 1])
-    only = [a for a in sys.argv[3:] if a.isdigit()]
+    only = [a for a in sys.argv[3:] if a.isdigit() and len(a) <= 4]
     for p in sorted(glob.glob(os.path.join(ind, '*_SLog3.tif'))):
         if only and not any('_%04d_' % int(o) in p for o in only): continue
         d = process(p)
