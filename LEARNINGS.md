@@ -108,3 +108,5 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - Look = PJ's reference `Video 40953.mp4`, matched by **measuring r/g and b/g per luma band** (deep blacks neutral-plum, low shadows red-warm, mids warm, highs golden, highlights held ≲0.87, sat ~0.25–0.3) and applying those ratios as a luma-dependent tint (strength 0.72), with navy jerseys protected and maize pushed to gold.
 - Arena ice is genuinely cyan in camera (G,B ≈ 1.5×R); a strict low-chroma WB mask misses it — use chroma < 0.6 and exclude warm pixels.
 - `BulletTime_look_SLog3_to_Rec709.cube` = the shared grade only (no per-shot correction / halation / grain) to drop on the timeline in Resolve.
+- **Picking stills:** score frames by sharpness (log Laplacian variance) + contrast, skip white flashes / near-black / whip-blur, take the best per ¼ s. For "effects showcase" picks, judge by eye per effect window — an automated "most VFX" score favours the messiest mid-transition frames.
+- **Cover choice:** a person + the effect + team colours that read at thumbnail size beats a wide ice shot; save the logo (Block M) for the end of the carousel as the payoff.
