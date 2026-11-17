@@ -101,3 +101,10 @@ A personal 16:9, 23.976 Michigan hockey hype edit, cut to "Prospect" (ft. Lil Ba
 - **Notes:**
   - `notes/STORYBOARD_v3_PROSPECT.md` — the running changelog of every version
   - `notes/TRANSITIONS_v*.md`
+
+## 7. Stills grade (for posting)
+- Everything (plates + lightning + CG) is still S-Log3, so **one grade over the log stills keeps VFX and footage consistent**; grading effects separately would drift.
+- `graphics/stills-grade/grade_stills.py` follows PJ's node order (from the december-short-film tree): CST in (S-Log3/SGamut3.Cine → linear 709) → **correct** per shot (exposure to a mid of 0.16, "HDR" highlight tame, WB from bright low-chroma ice/boards at 90%, ice-dominant frames pulled down) → curves (filmic toe/shoulder) → **grade** shared → halation → grain → Rec709.
+- Look = PJ's reference `Video 40953.mp4`, matched by **measuring r/g and b/g per luma band** (deep blacks neutral-plum, low shadows red-warm, mids warm, highs golden, highlights held ≲0.87, sat ~0.25–0.3) and applying those ratios as a luma-dependent tint (strength 0.72), with navy jerseys protected and maize pushed to gold.
+- Arena ice is genuinely cyan in camera (G,B ≈ 1.5×R); a strict low-chroma WB mask misses it — use chroma < 0.6 and exclude warm pixels.
+- `BulletTime_look_SLog3_to_Rec709.cube` = the shared grade only (no per-shot correction / halation / grain) to drop on the timeline in Resolve.
